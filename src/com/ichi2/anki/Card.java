@@ -29,7 +29,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 
 /**
  * A card is a presentation of a fact, and has two sides: a question and an answer. Any number of fields can appear on
@@ -420,8 +419,11 @@ public class Card {
 
     // FIXME: Should be removed. Calling code should directly interact with Model
     public CardModel getCardModel() {
-        Model myModel = Model.getModel(mDeck, mCardModelId, false);
-        return myModel.getCardModel(mCardModelId);
+    	if (mCardModel == null) {
+            Model myModel = Model.getModel(mDeck, mCardModelId, false);
+            mCardModel = myModel.getCardModel(mCardModelId);
+    	}
+    	return mCardModel;
     }
 
 
@@ -466,7 +468,7 @@ public class Card {
         try {
             cursor = AnkiDatabaseManager.getDatabase(mDeck.getDeckPath()).getDatabase().rawQuery(
                     "SELECT id, factId, cardModelId, created, modified, tags, "
-                            + "ordinal, priority, interval, lastInterval, "
+                            + "ordinal, 1, 1, priority, interval, lastInterval, "
                             + "due, lastDue, factor, lastFactor, firstAnswered, reps, "
                             + "successive, averageTime, reviewTime, youngEase0, youngEase1, "
                             + "youngEase2, youngEase3, youngEase4, matureEase0, matureEase1, "
@@ -802,7 +804,7 @@ public class Card {
 
     public String getQuestionOrAnswer(QA qa) {
         Map<String, String> fields = new HashMap<String, String>();
-        for (Fact.Field f : mFact.getFields()) {
+        for (Fact.Field f : getFact().getFields()) {
         	String name = f.getFieldModel().getName();
         	String value = f.getValue();
             // fields.put("text:" + f.getFieldModel().getName(), Utils.stripHTML(f.getValue()));
@@ -815,7 +817,7 @@ public class Card {
         fields.put("tags", mFact.getTags());
         fields.put("Tags", mFact.getTags());
         fields.put("modelTags", mFact.getModel().getTags());
-        fields.put("cardModel", mCardModel.getName());
+        fields.put("cardModel", getCardModel().getName());
         return (qa == QA.QUESTION ? mCardModel.getCompiledQuestion() : mCardModel.getCompiledAnswer()).execute(fields);
     }
 

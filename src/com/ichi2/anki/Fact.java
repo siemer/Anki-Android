@@ -109,7 +109,10 @@ public class Fact {
 
 
     public Model getModel() {
-    	return mModel;
+    	if (mModel == null) {
+    		mModel = Model.getModel(mDeck, mModelId, true);
+    	}
+    	return mModel;    	
     }
     /**
      * @return the fields
