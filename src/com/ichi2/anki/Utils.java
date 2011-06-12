@@ -101,6 +101,14 @@ public class Utils {
     private static final Pattern scriptPattern = Pattern.compile("(?s)<script.*?>.*?</script>");
     private static final Pattern tagPattern = Pattern.compile("<.*?>");
     private static final Pattern htmlEntitiesPattern = Pattern.compile("&#?\\w+;");
+    private static final Pattern cleanNamePattern = Pattern.compile("[\\ \"&]");
+
+    // remove space, backslash, double quote and ampersand
+    public static String cleanName(String name) {
+    	Matcher matcher = cleanNamePattern.matcher(name);
+    	return matcher.replaceAll("");
+    }
+    
     
     public static long genID() {
         long time = System.currentTimeMillis();

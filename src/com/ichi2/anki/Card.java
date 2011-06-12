@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Map.Entry;
 
 /**
@@ -41,6 +42,10 @@ public class Card {
 
     // TODO: Javadoc.
 
+	public static enum QA {
+		QUESTION, ANSWER
+	}
+	
     /** Card types. */
     public static final int TYPE_FAILED = 0;
     public static final int TYPE_REV = 1;
@@ -88,9 +93,6 @@ public class Card {
     private double mModified = Utils.now();
     private String mTags = "";
     private int mOrdinal;
-    // Cached - changed on fact update
-    private String mQuestion = "";
-    private String mAnswer = "";
     private int mPriority = PRIORITY_NORMAL;
     private double mInterval = 0;
     private double mLastInterval = 0;
@@ -176,55 +178,6 @@ public class Card {
         }
     }
 
-	/**
-	 * Format qa
-	 */
-	public void rebuildQA(Deck deck) {
-		rebuildQA(deck, true);
-	}
-	public void rebuildQA(Deck deck, boolean media) {
-        // Format qa
-		if (mFact != null && mCardModel != null) {
-			HashMap<String, String> qa = CardModel.formatQA(mFact, mCardModel, splitTags());
-
-            if (media) {
-                // Find old media references
-                HashMap<String, Integer> files = new HashMap<String, Integer>();
-                ArrayList<String> filesFromQA = Media.mediaFiles(mQuestion);
-                filesFromQA.addAll(Media.mediaFiles(mAnswer));
-                for (String f : filesFromQA) {
-                    if (files.containsKey(f)) {
-                        files.put(f, files.get(f) - 1);
-                    } else {
-                        files.put(f, -1);
-                    }
-                }
-                // Update q/a
-                mQuestion = qa.get("question");
-                mAnswer = qa.get("answer");
-                // Determine media delta
-                filesFromQA = Media.mediaFiles(mQuestion);
-                filesFromQA.addAll(Media.mediaFiles(mAnswer));
-                for (String f : filesFromQA) {
-                    if (files.containsKey(f)) {
-                        files.put(f, files.get(f) + 1);
-                    } else {
-                        files.put(f, 1);
-                    }
-                }
-                // Update media counts if we're attached to deck
-                for (Entry<String, Integer> entry : files.entrySet()) {
-                    Media.updateMediaCount(deck, entry.getKey(), entry.getValue());
-                }
-            } else {
-                // Update q/a
-                mQuestion = qa.get("question");
-                mAnswer = qa.get("answer");
-            }
-            setModified();
-		}
-	}
-
     public Card(Deck deck) {
         this(deck, null, null, Double.NaN);
     }
@@ -288,17 +241,6 @@ public class Card {
         // mFuzz = 0.95 + (0.1 * rand.nextDouble());
         mFuzz = (double) Math.random();
     }
-
-
-    // XXX Unused
-//    public String htmlQuestion(String type, boolean align) {
-//        return null;
-//    }
-//
-//
-//    public String htmlAnswer(boolean align) {
-//        return htmlQuestion("answer", align);
-//    }
 
 
     public void updateStats(int ease, String state) {
@@ -450,16 +392,6 @@ public class Card {
     }
 
 
-    public String[] splitTags() {
-        String[] tags = new String[]{
-            getFact().getTags(),
-            Model.getModel(mDeck, getFact().getModelId(), true).getTags(),
-            getCardModel().getName()
-        };
-        return tags;
-    }
-
-
     private String allTags() {
         // Non-Canonified string of fact and model tags
         if ((mTagsBySrc[TAGS_FACT].length() > 0) && (mTagsBySrc[TAGS_MODEL].length() > 0)) {
@@ -534,7 +466,7 @@ public class Card {
         try {
             cursor = AnkiDatabaseManager.getDatabase(mDeck.getDeckPath()).getDatabase().rawQuery(
                     "SELECT id, factId, cardModelId, created, modified, tags, "
-                            + "ordinal, question, answer, priority, interval, lastInterval, "
+                            + "ordinal, priority, interval, lastInterval, "
                             + "due, lastDue, factor, lastFactor, firstAnswered, reps, "
                             + "successive, averageTime, reviewTime, youngEase0, youngEase1, "
                             + "youngEase2, youngEase3, youngEase4, matureEase0, matureEase1, "
@@ -552,8 +484,6 @@ public class Card {
             mModified = cursor.getDouble(4);
             mTags = cursor.getString(5);
             mOrdinal = cursor.getInt(6);
-            mQuestion = cursor.getString(7);
-            mAnswer = cursor.getString(8);
             mPriority = cursor.getInt(9);
             mInterval = cursor.getDouble(10);
             mLastInterval = cursor.getDouble(11);
@@ -613,8 +543,6 @@ public class Card {
         values.put("modified", mModified);
         values.put("tags", mTags);
         values.put("ordinal", mOrdinal);
-        values.put("question", mQuestion);
-        values.put("answer", mAnswer);
         values.put("priority", mPriority);
         values.put("interval", mInterval);
         values.put("lastInterval", mLastInterval);
@@ -657,8 +585,6 @@ public class Card {
         values.put("modified", mModified);
         values.put("tags", mTags);
         values.put("ordinal", mOrdinal);
-        values.put("question", mQuestion);
-        values.put("answer", mAnswer);
         values.put("priority", mPriority);
         values.put("interval", mInterval);
         values.put("lastInterval", mLastInterval);
@@ -691,19 +617,6 @@ public class Card {
         AnkiDatabaseManager.getDatabase(mDeck.getDeckPath()).update(mDeck, "cards", values, "id = " + mId, null, true);
 
         // TODO: Should also write JOINED entries: CardModel and Fact.
-    }
-
-
-    /**
-     * Commit question and answer fields to database.
-     */
-    public void updateQAfields() {
-        setModified();
-        ContentValues values = new ContentValues();
-        values.put("modified", mModified);
-        values.put("question", mQuestion);
-        values.put("answer", mAnswer);
-        AnkiDatabaseManager.getDatabase(mDeck.getDeckPath()).update(mDeck, "cards", values, "id = " + mId, null);
     }
 
 
@@ -752,11 +665,11 @@ public class Card {
         builder.append("<html><body text=\"#FFFFFF\"><table><colgroup><col span=\"1\" style=\"width: 40%;\"><col span=\"1\" style=\"width: 60%;\"></colgroup><tr><td>");
         builder.append(res.getString(R.string.card_details_question));
         builder.append("</td><td>");
-        builder.append(Utils.stripHTML(mQuestion));
+        builder.append(Utils.stripHTML(getQuestion()));
         builder.append("</td></tr><tr><td>");
         builder.append(res.getString(R.string.card_details_answer));
         builder.append("</td><td>");
-        builder.append(Utils.stripHTML(mAnswer));
+        builder.append(Utils.stripHTML(getAnswer()));
         builder.append("</td></tr><tr><td>");
         builder.append(res.getString(R.string.card_details_due));
         builder.append("</td><td>");
@@ -877,23 +790,33 @@ public class Card {
     }
 
 
-    public void setQuestion(String question) {
-        mQuestion = question;
-    }
-
-
     public String getQuestion() {
-        return mQuestion;
-    }
-
-
-    public void setAnswer(String answer) {
-        mAnswer = answer;
+        return getQuestionOrAnswer(QA.QUESTION);
     }
 
 
     public String getAnswer() {
-        return mAnswer;
+        return getQuestionOrAnswer(QA.ANSWER);
+    }
+
+
+    public String getQuestionOrAnswer(QA qa) {
+        Map<String, String> fields = new HashMap<String, String>();
+        for (Fact.Field f : mFact.getFields()) {
+        	String name = f.getFieldModel().getName();
+        	String value = f.getValue();
+            // fields.put("text:" + f.getFieldModel().getName(), Utils.stripHTML(f.getValue()));
+            if (!f.getValue().equals("")) {
+                fields.put(name, String.format("<span class=\"%s\">%s</span>", Utils.cleanName(name), value));
+            } else {
+                fields.put(name, "");
+            }
+        }
+        fields.put("tags", mFact.getTags());
+        fields.put("Tags", mFact.getTags());
+        fields.put("modelTags", mFact.getModel().getTags());
+        fields.put("cardModel", mCardModel.getName());
+        return (qa == QA.QUESTION ? mCardModel.getCompiledQuestion() : mCardModel.getCompiledAnswer()).execute(fields);
     }
 
 

@@ -1764,8 +1764,7 @@ public class StudyOptions extends Activity {
     		}
 
             // Log.i(AnkiDroidApp.TAG, "onActivityResult - deckSelected = " + deckSelected);
-            boolean updateAllCards = (requestCode == DOWNLOAD_SHARED_DECK);
-            displayProgressDialogAndLoadDeck(updateAllCards);
+            displayProgressDialogAndLoadDeck();
 
         } else if (requestCode == PREFERENCES_UPDATE) {
             restorePreferences();
@@ -1935,11 +1934,6 @@ public class StudyOptions extends Activity {
 
 
     private void displayProgressDialogAndLoadDeck() {
-        displayProgressDialogAndLoadDeck(false);
-    }
-
-
-    private void displayProgressDialogAndLoadDeck(boolean updateAllCards) {
         Log.i(AnkiDroidApp.TAG, "displayProgressDialogAndLoadDeck - Loading deck " + mDeckFilename);
 
         // Don't open database again in onResume() until we know for sure this attempt to load the deck is finished
@@ -1953,13 +1947,8 @@ public class StudyOptions extends Activity {
         	mToggleCram.setChecked(false);
         	mToggleLimit.setEnabled(true);
 
-            if (updateAllCards) {
-                DeckTask.launchDeckTask(DeckTask.TASK_TYPE_LOAD_DECK_AND_UPDATE_CARDS, mLoadDeckHandler,
-                        new DeckTask.TaskData(mDeckFilename));
-            } else {
-                DeckTask.launchDeckTask(DeckTask.TASK_TYPE_LOAD_DECK, mLoadDeckHandler, new DeckTask.TaskData(
-                        mDeckFilename));
-            }
+            DeckTask.launchDeckTask(DeckTask.TASK_TYPE_LOAD_DECK, mLoadDeckHandler, new DeckTask.TaskData(
+                mDeckFilename));
         } else {
             if (mDeckFilename == null) {
                 Log.i(AnkiDroidApp.TAG, "displayProgressDialogAndLoadDeck - SD card unmounted.");

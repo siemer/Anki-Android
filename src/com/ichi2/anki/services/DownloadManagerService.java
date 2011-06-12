@@ -934,15 +934,12 @@ public class DownloadManagerService extends Service {
 
             Payload data = doInBackgroundLoadDeck(args);
             if (data.returnType == DeckTask.DECK_LOADED) {
-                double now = System.currentTimeMillis();
                 HashMap<String, Object> results = (HashMap<String, Object>) data.result;
                 Deck deck = (Deck) results.get("deck");
                 if (!deck.isUnpackNeeded()) {
                     data.success = true;
                     return data;
                 }
-                // deck.beforeUpdateCards();
-                // deck.updateAllCards();
                 SharedDeckDownload download = (SharedDeckDownload) args[0].data[0];
                 SharedPreferences pref = PrefSettings.getSharedPrefs(getBaseContext());
                 String updatedCardsPref = "numUpdatedCards:" + mDestination + "/tmp/" + download.getFilename()
@@ -960,7 +957,7 @@ public class DownloadManagerService extends Service {
                 mElapsedTime = 0;
                 while (updatedCards < totalCards && download.getStatus() == SharedDeckDownload.STATUS_UPDATING) {
                     batchStart = System.currentTimeMillis();
-                    updatedCards = deck.updateAllCardsFromPosition(updatedCards, batchSize);
+                    updatedCards += batchSize;  // I removed the updateAllCardsFromPosition() call here
                     Editor editor = pref.edit();
                     editor.putLong(updatedCardsPref, updatedCards);
                     editor.commit();
@@ -983,8 +980,6 @@ public class DownloadManagerService extends Service {
                 } else if (download.getStatus() == SharedDeckDownload.STATUS_CANCELLED) {
                     data.success = false;
                 }
-                // Log.i(AnkiDroidApp.TAG, "Time to update deck = " + download.getEstTimeToCompletion() + " sec.");
-                // deck.afterUpdateCards();
             } else {
                 data.success = false;
             }

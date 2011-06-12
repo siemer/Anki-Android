@@ -108,6 +108,9 @@ public class Fact {
     }
 
 
+    public Model getModel() {
+    	return mModel;
+    }
     /**
      * @return the fields
      */
@@ -231,9 +234,6 @@ public class Fact {
             Card newCard = new Card(mDeck);
             newCard.fromDB(cardsCursor.getLong(0));
             newCard.loadTags();
-            HashMap<String, String> newQA = CardModel.formatQA(this, newCard.getCardModel(), newCard.splitTags());
-            newCard.setQuestion(newQA.get("question"));
-            newCard.setAnswer(newQA.get("answer"));
 
             returnList.add(newCard);
         }

@@ -335,14 +335,7 @@ public class Deck {
             return deck;
         }
 
-        if (deck.mNeedUnpack) {
-            deck.addIndices();
-        }
-
         double oldMod = deck.mModified;
-
-        // Ensure necessary indices are available
-        deck.updateDynamicIndices();
 
         // FIXME: Temporary code for upgrade - ensure cards suspended on older clients are recognized
         // Ensure cards suspended on older clients are recognized
@@ -719,11 +712,6 @@ public class Deck {
             mVersion = 44;
             commitToDB();
         }
-        if (mVersion < 48) {
-            updateFieldCache(Utils.toPrimitive(getDB().queryColumn(Long.class, "SELECT id FROM facts", 0)));
-            mVersion = 48;
-            commitToDB();
-        }
         if (mVersion < 50) {
             // more new type handling
             rebuildTypes();
@@ -846,8 +834,6 @@ public class Deck {
                 getDB().getDatabase().execSQL("DROP INDEX IF EXISTS ix_cards_" + d + "2");
             }
             getDB().getDatabase().execSQL("DROP INDEX IF EXISTS ix_cards_typeCombined");
-            addIndices();
-            updateDynamicIndices();
             getDB().getDatabase().execSQL("VACUUM");
             mVersion = 62;
             commitToDB();
@@ -914,94 +900,6 @@ public class Deck {
             }
         }
         return false;
-    }
-
-    /**
-     * Add indices to the DB.
-     */
-    private void addIndices() {
-        // Counts, failed cards
-        getDB().getDatabase().execSQL(
-                "CREATE INDEX IF NOT EXISTS ix_cards_typeCombined ON cards (type, " + "combinedDue, factId)");
-        // Scheduler-agnostic type
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_cards_relativeDelay ON cards (relativeDelay)");
-        // Index on modified, to speed up sync summaries
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_cards_modified ON cards (modified)");
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_facts_modified ON facts (modified)");
-        // Priority - temporary index to make compat code faster. This can be removed when all clients are on 1.2,
-        // as can the ones below
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_cards_priority ON cards (priority)");
-        // Average factor
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_cards_factor ON cards (type, factor)");
-        // Card spacing
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_cards_factId ON cards (factId)");
-        // Stats
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_stats_typeDay ON stats (type, day)");
-        // Fields
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_fields_factId ON fields (factId)");
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_fields_fieldModelId ON fields (fieldModelId)");
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_fields_value ON fields (value)");
-        // Media
-        getDB().getDatabase().execSQL("CREATE UNIQUE INDEX IF NOT EXISTS ix_media_filename ON media (filename)");
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_media_originalPath ON media (originalPath)");
-        // Deletion tracking
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_cardsDeleted_cardId ON cardsDeleted (cardId)");
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_modelsDeleted_modelId ON modelsDeleted (modelId)");
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_factsDeleted_factId ON factsDeleted (factId)");
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_mediaDeleted_factId ON mediaDeleted (mediaId)");
-        // Tags
-        String txt = "CREATE UNIQUE INDEX IF NOT EXISTS ix_tags_tag on tags (tag)";
-        try {
-            getDB().getDatabase().execSQL(txt);
-        } catch (SQLException e) {
-            getDB().getDatabase().execSQL("DELETE FROM tags WHERE EXISTS (SELECT 1 FROM tags t2 " +
-                    "WHERE tags.tag = t2.tag AND tags.rowid > t2.rowid)");
-            getDB().getDatabase().execSQL(txt);
-        }
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_cardTags_tagCard ON cardTags (tagId, cardId)");
-        getDB().getDatabase().execSQL("CREATE INDEX IF NOT EXISTS ix_cardTags_cardId ON cardTags (cardId)");
-    }
-
-
-    /*
-     * Add stripped HTML cache for sorting/searching. Currently needed as part of the upgradeDeck, the cache is not
-     * really used, yet.
-     */
-    private void updateFieldCache(long[] fids) {
-        HashMap<Long, String> r = new HashMap<Long, String>();
-        Cursor cur = null;
-
-        Log.i(AnkiDroidApp.TAG, "updatefieldCache fids: " + Utils.ids2str(fids));
-        try {
-            cur = getDB().getDatabase().rawQuery(
-                    "SELECT factId, group_concat(value, ' ') FROM fields " + "WHERE factId IN " + Utils.ids2str(fids)
-                            + " GROUP BY factId", null);
-            while (cur.moveToNext()) {
-                String values = cur.getString(1);
-                // if (values.charAt(0) == ' ') {
-                // Fix for a slight difference between how Android SQLite and python sqlite work.
-                // Inconsequential difference in this context, but messes up any effort for automated testing.
-                values = values.replaceFirst("^ *", "");
-                // }
-                r.put(cur.getLong(0), Utils.stripHTMLMedia(values));
-            }
-        } finally {
-            if (cur != null && !cur.isClosed()) {
-                cur.close();
-            }
-        }
-
-        if (r.size() > 0) {
-            getDB().getDatabase().beginTransaction();
-            SQLiteStatement st = getDB().getDatabase().compileStatement("UPDATE facts SET spaceUntil=? WHERE id=?");
-            for (Entry<Long, String> entry : r.entrySet()) {
-                st.bindString(1, entry.getValue());
-                st.bindLong(2, entry.getKey().longValue());
-                st.execute();
-            }
-            getDB().getDatabase().setTransactionSuccessful();
-            getDB().getDatabase().endTransaction();
-        }
     }
 
 
@@ -2823,58 +2721,6 @@ public class Deck {
     }
 
 
-    // TODO: The real methods to update cards on Anki should be implemented instead of this
-    public void updateAllCards() {
-        updateAllCardsFromPosition(0, Long.MAX_VALUE);
-    }
-
-
-    public long updateAllCardsFromPosition(long numUpdatedCards, long limitCards) {
-        // TODO: Cache this query, order by FactId, Id
-        Cursor cursor = null;
-        try {
-            cursor = getDB().getDatabase().rawQuery(
-                    "SELECT id, factId " + "FROM cards " + "ORDER BY factId, id " + "LIMIT " + limitCards + " OFFSET "
-                            + numUpdatedCards, null);
-
-            getDB().getDatabase().beginTransaction();
-            while (cursor.moveToNext()) {
-                // Get card
-                Card card = new Card(this);
-                card.fromDB(cursor.getLong(0));
-                Log.i(AnkiDroidApp.TAG, "Card id = " + card.getId() + ", numUpdatedCards = " + numUpdatedCards);
-
-                // Load tags
-                card.loadTags();
-
-                // Get the related fact
-                Fact fact = card.getFact();
-                // Log.i(AnkiDroidApp.TAG, "Fact id = " + fact.id);
-
-                // Generate the question and answer for this card and update it
-                HashMap<String, String> newQA = CardModel.formatQA(fact, card.getCardModel(), card.splitTags());
-                card.setQuestion(newQA.get("question"));
-                Log.i(AnkiDroidApp.TAG, "Question = " + card.getQuestion());
-                card.setAnswer(newQA.get("answer"));
-                Log.i(AnkiDroidApp.TAG, "Answer = " + card.getAnswer());
-
-                card.updateQAfields();
-
-                numUpdatedCards++;
-
-            }
-            getDB().getDatabase().setTransactionSuccessful();
-        } finally {
-            getDB().getDatabase().endTransaction();
-            if (cursor != null && !cursor.isClosed()) {
-                cursor.close();
-            }
-        }
-
-        return numUpdatedCards;
-    }
-
-
     /*
      * Answering a card*****************************
      */
@@ -4067,100 +3913,6 @@ public class Deck {
     }
 
 
-    // CSS for all the fields
-    private String rebuildCSS() {
-        StringBuilder css = new StringBuilder(512);
-        Cursor cur = null;
-
-        try {
-            cur = getDB().getDatabase().rawQuery(
-                    "SELECT id, quizFontFamily, quizFontSize, quizFontColour, -1, "
-                            + "features, editFontFamily FROM fieldModels", null);
-            while (cur.moveToNext()) {
-                css.append(_genCSS(".fm", cur));
-            }
-            cur.close();
-            cur = getDB().getDatabase().rawQuery("SELECT id, null, null, null, questionAlign, 0, 0 FROM cardModels",
-                    null);
-            StringBuilder cssAnswer = new StringBuilder(512);
-            while (cur.moveToNext()) {
-                css.append(_genCSS("#cmq", cur));
-                cssAnswer.append(_genCSS("#cma", cur));
-            }
-            css.append(cssAnswer.toString());
-            cur.close();
-            cur = getDB().getDatabase().rawQuery("SELECT id, lastFontColour FROM cardModels", null);
-            while (cur.moveToNext()) {
-                css.append(".cmb").append(Utils.hexifyID(cur.getLong(0))).append(" {background:").append(
-                        cur.getString(1)).append(";}\n");
-            }
-        } finally {
-            if (cur != null && !cur.isClosed()) {
-                cur.close();
-            }
-        }
-        setVar("cssCache", css.toString(), false);
-        addHexCache();
-
-        return css.toString();
-    }
-
-
-    private String _genCSS(String prefix, Cursor row) {
-        StringBuilder t = new StringBuilder(256);
-        long id = row.getLong(0);
-        String fam = row.getString(1);
-        int siz = row.getInt(2);
-        String col = row.getString(3);
-        int align = row.getInt(4);
-        String rtl = row.getString(5);
-        int pre = row.getInt(6);
-        if (fam != null) {
-            t.append("font-family:\"").append(fam).append("\";");
-        }
-        if (siz != 0) {
-            t.append("font-size:").append(siz).append("px;");
-        }
-        if (col != null) {
-            t.append("color:").append(col).append(";");
-        }
-        if (rtl != null && rtl.compareTo("rtl") == 0) {
-            t.append("direction:rtl;unicode-bidi:embed;");
-        }
-        if (pre != 0) {
-            t.append("white-space:pre-wrap;");
-        }
-        if (align != -1) {
-            if (align == 0) {
-                t.append("text-align:center;");
-            } else if (align == 1) {
-                t.append("text-align:left;");
-            } else {
-                t.append("text-align:right;");
-            }
-        }
-        if (t.length() > 0) {
-            t.insert(0, prefix + Utils.hexifyID(id) + " {").append("}\n");
-        }
-        return t.toString();
-    }
-
-
-    private void addHexCache() {
-        ArrayList<Long> ids = getDB().queryColumn(Long.class,
-                "SELECT id FROM fieldModels UNION SELECT id FROM cardModels UNION SELECT id FROM models", 0);
-        JSONObject jsonObject = new JSONObject();
-        for (Long id : ids) {
-            try {
-                jsonObject.put(id.toString(), Utils.hexifyID(id.longValue()));
-            } catch (JSONException e) {
-                Log.e(AnkiDroidApp.TAG, "addHexCache: Error while generating JSONObject: " + e.toString());
-                throw new RuntimeException(e);
-            }
-        }
-        setVar("hexCache", jsonObject.toString(), false);
-    }
-
     //
     // Syncing
     // *************************
@@ -4396,70 +4148,6 @@ public class Deck {
     public String getUndoType() {
     	return mCurrentUndoRedoType;
     }
-
-    /*
-     * Dynamic indices*********************************************************
-     */
-
-    private void updateDynamicIndices() {
-        Log.i(AnkiDroidApp.TAG, "updateDynamicIndices - Updating indices...");
-        HashMap<String, String> indices = new HashMap<String, String>();
-        indices.put("intervalDesc", "(type, priority desc, interval desc, factId, combinedDue)");
-        indices.put("intervalAsc", "(type, priority desc, interval, factId, combinedDue)");
-        indices.put("randomOrder", "(type, priority desc, factId, ordinal, combinedDue)");
-        indices.put("dueAsc", "(type, priority desc, due, factId, combinedDue)");
-        indices.put("dueDesc", "(type, priority desc, due desc, factId, combinedDue)");
-
-        ArrayList<String> required = new ArrayList<String>();
-        if (mRevCardOrder == REV_CARDS_OLD_FIRST) {
-            required.add("intervalDesc");
-        }
-        if (mRevCardOrder == REV_CARDS_NEW_FIRST) {
-            required.add("intervalAsc");
-        }
-        if (mRevCardOrder == REV_CARDS_RANDOM) {
-            required.add("randomOrder");
-        }
-        if (mRevCardOrder == REV_CARDS_DUE_FIRST || mNewCardOrder == NEW_CARDS_OLD_FIRST
-                || mNewCardOrder == NEW_CARDS_RANDOM) {
-            required.add("dueAsc");
-        }
-        if (mNewCardOrder == NEW_CARDS_NEW_FIRST) {
-            required.add("dueDesc");
-        }
-
-        // Add/delete
-        boolean analyze = false;
-        Set<Entry<String, String>> entries = indices.entrySet();
-        Iterator<Entry<String, String>> iter = entries.iterator();
-        String indexName = null;
-        while (iter.hasNext()) {
-            Entry<String, String> entry = iter.next();
-            indexName = "ix_cards_" + entry.getKey() + "2";
-            if (required.contains(entry.getKey())) {
-                Cursor cursor = null;
-                try {
-                    cursor = getDB().getDatabase().rawQuery(
-                            "SELECT 1 FROM sqlite_master WHERE name = '" + indexName + "'", null);
-                    if ((!cursor.moveToNext()) || (cursor.getInt(0) != 1)) {
-                        getDB().getDatabase().execSQL("CREATE INDEX " + indexName + " ON cards " + entry.getValue());
-                        analyze = true;
-                    }
-                } finally {
-                    if (cursor != null) {
-                        cursor.close();
-                    }
-                }
-            } else {
-                // Leave old indices for older clients
-                getDB().getDatabase().execSQL("DROP INDEX IF EXISTS " + indexName);
-            }
-        }
-        if (analyze) {
-            getDB().getDatabase().execSQL("ANALYZE");
-        }
-    }
-
 
     /*
      * JSON

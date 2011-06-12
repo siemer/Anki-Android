@@ -114,6 +114,7 @@ public class CardModel implements Comparator<CardModel> {
         mAformat = aformat;
         mActive = active ? 1 : 0;
         mId = Utils.genID();
+        refreshTemplates();
     }
 
 
@@ -256,66 +257,6 @@ public class CardModel implements Comparator<CardModel> {
             }
         }
         return modelId;
-    }
-
-
-    // XXX Unused
-    // /**
-    // * Return a copy of this object.
-    // */
-    // public CardModel copy() {
-    // CardModel cardModel = new CardModel(mName, mQformat, mAformat, (mActive == 1) ? true : false);
-    // cardModel.mOrdinal = mOrdinal;
-    // cardModel.mModelId = mModelId;
-    // cardModel.mDescription = mDescription;
-    // cardModel.mLformat = mLformat;
-    // cardModel.mQedformat = mQedformat;
-    // cardModel.mAedformat = mAedformat;
-    // cardModel.mQuestionInAnswer = mQuestionInAnswer;
-    // cardModel.mQuestionFontFamily = mQuestionFontFamily;
-    // cardModel.mQuestionFontSize = mQuestionFontSize;
-    // cardModel.mQuestionFontColour = mQuestionFontColour;
-    // cardModel.mQuestionAlign = mQuestionAlign;
-    // cardModel.mAnswerFontFamily = mAnswerFontFamily;
-    // cardModel.mAnswerFontSize = mAnswerFontSize;
-    // cardModel.mAnswerFontColour = mAnswerFontColour;
-    // cardModel.mAnswerAlign = mAnswerAlign;
-    // cardModel.mLastFontFamily = mLastFontFamily;
-    // cardModel.mLastFontSize = mLastFontSize;
-    // cardModel.mLastFontColour = mLastFontColour;
-    // cardModel.mEditQuestionFontFamily = mEditQuestionFontFamily;
-    // cardModel.mEditQuestionFontSize = mEditQuestionFontSize;
-    // cardModel.mEditAnswerFontFamily = mEditAnswerFontFamily;
-    // cardModel.mEditAnswerFontSize = mEditAnswerFontSize;
-    // cardModel.mAllowEmptyAnswer = mAllowEmptyAnswer;
-    // cardModel.mTypeAnswer = mTypeAnswer;
-    // cardModel.mModel = null;
-    //
-    // return cardModel;
-    // }
-
-    public static HashMap<String, String> formatQA(Fact fact, CardModel cm, String[] tags) {
-
-        Map<String, String> fields = new HashMap<String, String>();
-        for (Fact.Field f : fact.getFields()) {
-            fields.put("text:" + f.getFieldModel().getName(), Utils.stripHTML(f.getValue()));
-            if (!f.getValue().equals("")) {
-                fields.put(f.getFieldModel().getName(), String.format("<span class=\"fm%s\">%s</span>", Utils
-                        .hexifyID(f.getFieldModelId()), f.getValue()));
-            } else {
-                fields.put(f.getFieldModel().getName(), "");
-            }
-        }
-        fields.put("tags", tags[Card.TAGS_FACT]);
-        fields.put("Tags", tags[Card.TAGS_FACT]);
-        fields.put("modelTags", tags[Card.TAGS_MODEL]);
-        fields.put("cardModel", tags[Card.TAGS_TEMPL]);
-
-        HashMap<String, String> d = new HashMap<String, String>();
-        d.put("question", cm.mQTemplate.execute(fields));
-        d.put("answer", cm.mATemplate.execute(fields));
-
-        return d;
     }
 
 
@@ -479,6 +420,7 @@ public class CardModel implements Comparator<CardModel> {
      */
     public void setQFormat(String qFormat) {
         mQformat = qFormat;
+        refreshTemplates();
     }
     
     /**
@@ -495,5 +437,16 @@ public class CardModel implements Comparator<CardModel> {
      */
     public void setAFormat(String aFormat) {
         mAformat = aFormat;
+        refreshTemplates();
+    }
+    
+    
+    public Template getCompiledQuestion() {
+    	return mQTemplate;
+    }
+    
+    
+    public Template getCompiledAnswer() {
+    	return mATemplate;
     }
 }
