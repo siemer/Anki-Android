@@ -28,6 +28,7 @@ import android.database.sqlite.SQLiteStatement;
 import android.util.Log;
 
 import com.ichi2.anki.Fact.Field;
+import com.samskivert.mustache.Template;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -672,6 +673,19 @@ public class Deck {
     }
 
 
+    public Template getMetaTemplate() {
+    	for (String prefix: new String[] {"android.portrait.", "android.", ""}) {
+    		File metaTemplateFile = File(mediaDir, prefix + );
+    		if (metaTemplateFile.exists()) {
+    			return FilemetaTemplateFile
+    		}
+    		if source.exists() {
+    			metatemplate = source.from_this().compile();
+    			break;
+    		}
+    	}
+
+    }
     /**
      * Upgrade deck to latest version. Any comments resulting from the upgrade, should be stored in upgradeNotes, as
      * R.string.id, successful or not. The idea is to have Deck.java generate the notes from upgrading and not the UI.

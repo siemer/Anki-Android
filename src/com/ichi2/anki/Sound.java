@@ -18,6 +18,7 @@ package com.ichi2.anki;
 
 import java.io.File;
 import java.net.URI;
+import java.net.URISyntaxException;
 
 import android.media.AudioManager;
 import android.media.MediaPlayer;
@@ -30,6 +31,8 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import com.ichi2.anki.Card.StringAndList;
 
 /**
  * Class used to parse, load and play sound files on AnkiDroid.
@@ -188,4 +191,27 @@ public class Sound {
         	ReadText.stopTts();
         }
     }
+
+
+	public static StringAndList splitHtmlandRewrite(String html) {
+		// split the input into sound URI list and HTML (atm rewritten to use <audio> elements)
+		StringAndList result = new StringAndList();
+		result.list = new ArrayList<URI>();
+		StringBuffer finalHtml = new StringBuffer();
+		Matcher htmlMatcher = sSoundPattern.matcher(html);
+		while (htmlMatcher.find()) {
+			URI mp3;
+			try {
+				mp3 = new URI(htmlMatcher.group(1));
+			} 
+			catch (URISyntaxException e) {
+				mp3 = URI.create("");
+			}
+			htmlMatcher.appendReplacement(finalHtml, "<audio src=\"$1\"></audio>");
+			result.list.add(mp3);
+		}
+		htmlMatcher.appendTail(finalHtml);
+		result.string = finalHtml.toString();
+		return result;
+	}
 }

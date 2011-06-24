@@ -20,15 +20,20 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.res.Resources;
 import android.database.Cursor;
+import android.database.CursorJoiner.Result;
 import android.text.format.DateFormat;
 import android.util.Log;
 
+import java.io.File;
 import java.lang.reflect.Field;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import com.samskivert.mustache.Template;
 
 /**
  * A card is a presentation of a fact, and has two sides: a question and an answer. Any number of fields can appear on
@@ -44,7 +49,7 @@ public class Card {
 	public static enum QA {
 		QUESTION, ANSWER
 	}
-	
+
     /** Card types. */
     public static final int TYPE_FAILED = 0;
     public static final int TYPE_REV = 1;
@@ -132,7 +137,7 @@ public class Card {
     // BEGIN JOINed variables
     private CardModel mCardModel;
     private Fact mFact;
-    private String[] mTagsBySrc;
+    private final String[] mTagsBySrc;
     // END JOINed variables
 
     private double mTimerStarted;
@@ -238,7 +243,7 @@ public class Card {
     public void genFuzz() {
         // Random rand = new Random();
         // mFuzz = 0.95 + (0.1 * rand.nextDouble());
-        mFuzz = (double) Math.random();
+        mFuzz = Math.random();
     }
 
 
@@ -801,24 +806,103 @@ public class Card {
         return getQuestionOrAnswer(QA.ANSWER);
     }
 
+    // the metaTemplate may be based on a javascript call for card flip. To resolve this:
+    // if both HTML pages are the same or one of them empty, make a JS call instead of HTML switch
+    // or similar...
 
-    public String getQuestionOrAnswer(QA qa) {
+    // sound is ideally done by the web widget, with <audio> elements. – I see a niche for a
+    // libanki-js library subpart... E.g. something that can be imported by the meta-templates to
+    // solve common tasks: find out which side of the card we are on, collect all <audio> elements
+    // of the question or answer in source code order, play them in sequence (not all at once).
+    // Anki-Android uses TextToSpeech as well; something better done in the host environment?
+    // for the time being, audio is launched by the host; also because <audio> is badly supported
+    // as of 2011;
+
+    // someCardModel.get[Compiled]Question(): raw, including virgin sound tags; but from mediaDir or db
+    // someFact.getFields(): Map of field names to values OR similar
+    // someCard.getAugmentedFields(boolean legacy): with extra fields like card model name, ...
+    //  in legacy mode: put <span> around the fields
+    //  otherwise: delegate that to Mustache: {{}} instead of escaping HTML: put <span> around it
+    //   {{{}}} as is: no escaping, no span; {{& }} escape HTML and put <span>s
+    // someCard.getQuestionOrAnswer(): qa with fields replaced and sound as URI list
+    // someCard.getQA(): the same, without sound.
+    //   both rewrite [sound:...] to <audio...>
+    // Deck.registerMetaTemplate(String metaTemplate): in case someDeck does not have one
+    // someCard.getFinal(x.QUESTION, boolean legacy): formatted HTML question page
+
+    // note: in “non-legacy” mode, audio urls should be retrieved from the webwidget DOM, if the
+    // host is interested in them (e.g. for playing)
+
+    // play question means: play question audio
+    // play answer: q + a, except when question got played alone the last time, then only answer
+
+
+    public String getFinal(QA qa) {
+    	return getFinal(qa, false).string;
+    }
+
+    public StringAndList getFinal(QA qa, boolean legacy) {
+    	String mediaDir = mDeck.mediaDir(false, true);
+    	Template metaTemplate = mDeck.getMetaTemplate();
+    	for (String prefix: new String[] {"android.portrait.", "android.", ""}) {
+    		File metaTemplateFile = File(mediaDir, prefix + );
+    		if source.exists() {
+    			metatemplate = source.from_this().compile();
+    			break;
+    		}
+    	}
+
+    	StringAndList result = new StringAndList();
+    	Map<String, String> context = new HashMap<String, String>();
+    	StringAndList question = getQA(QA.QUESTION, legacy);
+    	StringAndList answer = new StringAndList();
+    	if (qa == QA.ANSWER) {
+    		answer = getQA(QA.ANSWER, legacy);
+    		result.list = answer.list;
+    	} else {
+    		result.list = question.list;
+    	}
+
+    	context.put("question", question.string);
+    	context.put("answer", answer.string);
+        result.string = metatemplate.execute(context);
+        return result;
+    }
+
+
+    static class StringAndList {
+    	String string;
+    	List<URI> list;
+    }
+
+    // next step: fish the list from the DOM (<audio> templates return a empty list anyway...)
+    public StringAndList getQA(QA qa, boolean legacy) {
+    	Map<String, String> fields = getAugmentedFields(true);  // Mustache not updated yet
+    	Template template = (qa == QA.QUESTION) ? mCardModel.getCompiledQuestion() : mCardModel.getCompiledAnswer();
+    	return Sound.splitHtmlandRewrite(template.execute(fields));
+    }
+
+
+    public String getQA(QA qa) {
+    	return getQA(qa, false).string;
+    }
+
+    private Map<String, String> getAugmentedFields(boolean legacy) {
         Map<String, String> fields = new HashMap<String, String>();
         for (Fact.Field f : getFact().getFields()) {
         	String name = f.getFieldModel().getName();
         	String value = f.getValue();
             // fields.put("text:" + f.getFieldModel().getName(), Utils.stripHTML(f.getValue()));
-            if (!f.getValue().equals("")) {
-                fields.put(name, String.format("<span class=\"%s\">%s</span>", Utils.cleanName(name), value));
-            } else {
-                fields.put(name, "");
+            if (!value.equals("") && legacy) {
+                value = String.format("<span class=\"%s\">%s</span>", Utils.cleanName(name), value);
             }
+            fields.put(name, value);
         }
         fields.put("tags", mFact.getTags());
         fields.put("Tags", mFact.getTags());
         fields.put("modelTags", mFact.getModel().getTags());
         fields.put("cardModel", getCardModel().getName());
-        return (qa == QA.QUESTION ? mCardModel.getCompiledQuestion() : mCardModel.getCompiledAnswer()).execute(fields);
+    	return fields;
     }
 
 

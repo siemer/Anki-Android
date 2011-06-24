@@ -1,7 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <fileset-config file-format-version="1.2.0" simple-config="true" sync-formatter="false">
-  <fileset name="all" enabled="true" check-config-name="Sun Checks" local="false">
+  <local-check-config name="Ankidroid remote checkstyle" location="http://ankidroid.googlecode.com/files/ankidroid.checkstyle.xml" type="remote" description="">
+    <additional-data name="cache-file" value="true"/>
+    <additional-data name="cache-props-file-location" value="Ankidroid remote checkstyle_1308854092188_cache.properties"/>
+    <additional-data name="cache-file-location" value="Ankidroid remote checkstyle_1308854092188_cache.xml"/>
+  </local-check-config>
+  <local-check-config name="Ankidroid local checkstyle" location="/home/siemer/src/ankidroid.checkstyle.xml" type="external" description="Ankidroid remote checkstyle config modified for Checkstyle 5.x">
+    <additional-data name="protect-config-file" value="false"/>
+  </local-check-config>
+  <fileset name="all" enabled="true" check-config-name="Ankidroid local checkstyle" local="true">
     <file-match-pattern match-pattern="." include-pattern="true"/>
   </fileset>
 </fileset-config>
