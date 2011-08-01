@@ -262,7 +262,7 @@ public class DeckPicker extends Activity implements Runnable {
                 Resources res = getResources();
                 int total = ((Integer)values[1]).intValue();
                 int done = ((Integer)values[2]).intValue();
-                values[0] = ((String)values[3]);
+                values[0] = (values[3]);
                 values[1] = res.getString(R.string.sync_downloading_media, done, total);
             }
 			if (mProgressDialog == null || !mProgressDialog.isShowing()) {
@@ -660,7 +660,6 @@ public class DeckPicker extends Activity implements Runnable {
 		case R.id.download_missing_media:
 		    deckPath = data.get("filepath");
 		    deck = Deck.openDeck(deckPath);
-		    Reviewer.setupMedia(deck);
 		    Connection.downloadMissingMedia(mDownloadMediaListener, new Connection.Payload(new Object[] {deck}));
 		    return true;
 		default:
@@ -1374,9 +1373,10 @@ public class DeckPicker extends Activity implements Runnable {
     }
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        if (gestureDetector.onTouchEvent(event))
-	        return true;
-	    else
-	    	return false;
+        if (gestureDetector.onTouchEvent(event)) {
+            return true;
+        } else {
+            return false;
+        }
     }
 }

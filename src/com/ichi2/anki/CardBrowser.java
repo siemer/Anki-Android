@@ -22,10 +22,10 @@ import android.app.Dialog;
 import android.app.ProgressDialog;
 import android.content.Context;
 import android.content.DialogInterface;
-import android.content.DialogInterface.OnCancelListener;
-import android.content.DialogInterface.OnClickListener;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.DialogInterface.OnCancelListener;
+import android.content.DialogInterface.OnClickListener;
 import android.content.res.Resources;
 import android.os.Bundle;
 import android.text.Editable;
@@ -33,7 +33,6 @@ import android.text.TextWatcher;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.ContextMenu;
-import android.view.ContextMenu.ContextMenuInfo;
 import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -41,16 +40,19 @@ import android.view.SubMenu;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.view.ContextMenu.ContextMenuInfo;
 import android.webkit.WebView;
 import android.widget.AdapterView;
-import android.widget.AdapterView.AdapterContextMenuInfo;
-import android.widget.AdapterView.OnItemClickListener;
 import android.widget.EditText;
 import android.widget.ListView;
 import android.widget.SimpleAdapter;
 import android.widget.TextView;
+import android.widget.AdapterView.AdapterContextMenuInfo;
+import android.widget.AdapterView.OnItemClickListener;
 
 import com.tomgibara.android.veecheck.util.PrefSettings;
+
+import org.amr.arabic.ArabicUtilities;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -58,8 +60,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-
-import org.amr.arabic.ArabicUtilities;
 
 public class CardBrowser extends Activity {
     private ArrayList<HashMap<String, String>> mCards;
@@ -113,7 +113,7 @@ public class CardBrowser extends Activity {
     private String[] allTags;
     private HashSet<String> mSelectedTags;
     private AlertDialog mTagsDialog;
-    
+
     private boolean mPrefFixArabic;
 
 
@@ -536,15 +536,15 @@ public class CardBrowser extends Activity {
 
 
     private void updateCard(Card card, ArrayList<HashMap<String, String>> list, int position) {
-        list.get(position).put("question", Utils.stripHTML(card.getQuestion()));
-        list.get(position).put("answer", Utils.stripHTML(card.getAnswer()));
+        list.get(position).put("question", "");
+        list.get(position).put("answer", "");
         for (long cardId : mDeck.getCardsFromFactId(card.getFactId())) {
         	if (cardId != card.getId()) {
         		int positionC = getPosition(mCards, cardId);
                 int positionA = getPosition(mAllCards, cardId);
                 Card c = mDeck.cardFromId(cardId);
-                String question = Utils.stripHTML(c.getQuestion());
-                String answer = Utils.stripHTML(c.getAnswer());
+                String question = "";
+                String answer = "";
                 if (positionC != -1) {
                     mCards.get(positionC).put("question", question);
                     mCards.get(positionC).put("answer", answer);
@@ -621,7 +621,7 @@ public class CardBrowser extends Activity {
         updateList();
     }
 
-    private DeckTask.TaskListener mLoadCardsHandler = new DeckTask.TaskListener() {
+    private final DeckTask.TaskListener mLoadCardsHandler = new DeckTask.TaskListener() {
 
         @Override
         public void onPreExecute() {
@@ -670,7 +670,7 @@ public class CardBrowser extends Activity {
                 		item[1] = ArabicUtilities.reshapeSentence(item[1]);
                 		item[2] = ArabicUtilities.reshapeSentence(item[2]);
                 	}
-                	
+
                     HashMap<String, String> data = new HashMap<String, String>();
                     data.put("id", item[0]);
                     data.put("question", item[1]);
@@ -695,7 +695,7 @@ public class CardBrowser extends Activity {
         }
     };
 
-    private DeckTask.TaskListener mMarkCardHandler = new DeckTask.TaskListener() {
+    private final DeckTask.TaskListener mMarkCardHandler = new DeckTask.TaskListener() {
         @Override
         public void onPreExecute() {
             Resources res = getResources();
@@ -717,7 +717,7 @@ public class CardBrowser extends Activity {
         }
     };
 
-    private DeckTask.TaskListener mSuspendCardHandler = new DeckTask.TaskListener() {
+    private final DeckTask.TaskListener mSuspendCardHandler = new DeckTask.TaskListener() {
         @Override
         public void onPreExecute() {
             Resources res = getResources();
@@ -737,7 +737,7 @@ public class CardBrowser extends Activity {
         }
     };
 
-    private DeckTask.TaskListener mDeleteCardHandler = new DeckTask.TaskListener() {
+    private final DeckTask.TaskListener mDeleteCardHandler = new DeckTask.TaskListener() {
         @Override
         public void onPreExecute() {
             Resources res = getResources();
@@ -758,7 +758,7 @@ public class CardBrowser extends Activity {
         }
     };
 
-    private DeckTask.TaskListener mUndoRedoHandler = new DeckTask.TaskListener() {
+    private final DeckTask.TaskListener mUndoRedoHandler = new DeckTask.TaskListener() {
         @Override
         public void onPreExecute() {
             Resources res = getResources();
@@ -816,7 +816,7 @@ public class CardBrowser extends Activity {
         }
     };
 
-    private DeckTask.TaskListener mUpdateCardHandler = new DeckTask.TaskListener() {
+    private final DeckTask.TaskListener mUpdateCardHandler = new DeckTask.TaskListener() {
         @Override
         public void onPreExecute() {
             mProgressDialog = ProgressDialog.show(CardBrowser.this, "",
@@ -845,7 +845,7 @@ public class CardBrowser extends Activity {
 
     public class SizeControlledListAdapter extends SimpleAdapter {
 
-        private int fontSizeScalePcent;
+        private final int fontSizeScalePcent;
         private float originalTextSize = -1.0f;
 
 
@@ -857,6 +857,7 @@ public class CardBrowser extends Activity {
         }
 
 
+        @Override
         public View getView(int position, View convertView, ViewGroup parent) {
             View view = super.getView(position, convertView, parent);
 

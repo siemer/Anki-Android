@@ -1,0 +1,33 @@
+#EclipseHTMLEditor configuration file
+#Thu Jul 21 03:19:42 CST 2011
+javaScriptDeprecated=Error
+javaScriptIndentChar=\ 
+javaScriptCheckTypes=Error
+useDTD=true
+javaScriptCheckRegExp=Error
+validateJS=true
+javaScriptUnknownDefines=Error
+javaScriptStrictModuleDepCheck=Error
+javaScriptAccessControls=Error
+javaScriptFileoverviewTags=Error
+javaScriptCompleters=ECMA Script\nFireFox
+javaScriptInitIndentLevel=0
+javaScriptInvalidCasts=Error
+validateXML=true
+javaScriptVisibility=Error
+javaScriptNonStandardJsDocs=Error
+javaScripts=
+javaScriptBracesOnOwnLine=true
+removeMarkers=false
+javaScriptUndefinedVars=Error
+validateJSP=true
+javaScriptSpaceAfterAnonFunc=false
+validateHTML=true
+javaScriptPreserveNewlines=true
+root=/
+javaScriptUseUndefined=Error
+javaScriptMissingProperties=Error
+javaScriptIndentSize=4
+javaScriptLibPaths=
+validateDTD=true
+javaScriptCheckVars=Error

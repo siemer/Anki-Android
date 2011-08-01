@@ -1,5 +1,6 @@
 /****************************************************************************************
  * Copyright (c) 2009 Daniel Svärd <daniel.svard@gmail.com>                             *
+ * Copyright (c) 2011 Robert Siemer <Robert.Siemer-pankidroid@backsla.sh>
  *                                                                                      *
  * This program is free software; you can redistribute it and/or modify it under        *
  * the terms of the GNU General Public License as published by the Free Software        *
@@ -20,20 +21,19 @@ import android.content.ContentValues;
 import android.content.Context;
 import android.content.res.Resources;
 import android.database.Cursor;
-import android.database.CursorJoiner.Result;
 import android.text.format.DateFormat;
 import android.util.Log;
 
-import java.io.File;
+import com.ichi2.anki.CardModel.QA;
+
+import sh.backsla.mustache.Template;
+
 import java.lang.reflect.Field;
-import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
-import com.samskivert.mustache.Template;
 
 /**
  * A card is a presentation of a fact, and has two sides: a question and an answer. Any number of fields can appear on
@@ -43,12 +43,6 @@ import com.samskivert.mustache.Template;
  * @see http://ichi2.net/anki/wiki/KeyTermsAndConcepts#Cards
  */
 public class Card {
-
-    // TODO: Javadoc.
-
-	public static enum QA {
-		QUESTION, ANSWER
-	}
 
     /** Card types. */
     public static final int TYPE_FAILED = 0;
@@ -672,11 +666,11 @@ public class Card {
         builder.append("<html><body text=\"#FFFFFF\"><table><colgroup><col span=\"1\" style=\"width: 40%;\"><col span=\"1\" style=\"width: 60%;\"></colgroup><tr><td>");
         builder.append(res.getString(R.string.card_details_question));
         builder.append("</td><td>");
-        builder.append(Utils.stripHTML(getQuestion()));
+        builder.append(Utils.stripHTML(mCardModel.getQa(QA.QUESTION)));
         builder.append("</td></tr><tr><td>");
         builder.append(res.getString(R.string.card_details_answer));
         builder.append("</td><td>");
-        builder.append(Utils.stripHTML(getAnswer()));
+        builder.append(Utils.stripHTML(mCardModel.getQa(QA.ANSWER)));
         builder.append("</td></tr><tr><td>");
         builder.append(res.getString(R.string.card_details_due));
         builder.append("</td><td>");
@@ -797,18 +791,7 @@ public class Card {
     }
 
 
-    public String getQuestion() {
-        return getQuestionOrAnswer(QA.QUESTION);
-    }
-
-
-    public String getAnswer() {
-        return getQuestionOrAnswer(QA.ANSWER);
-    }
-
-    // the metaTemplate may be based on a javascript call for card flip. To resolve this:
-    // if both HTML pages are the same or one of them empty, make a JS call instead of HTML switch
-    // or similar...
+    // the metaTemplate flips with JavaScript onflip()
 
     // sound is ideally done by the web widget, with <audio> elements. – I see a niche for a
     // libanki-js library subpart... E.g. something that can be imported by the meta-templates to
@@ -818,84 +801,50 @@ public class Card {
     // for the time being, audio is launched by the host; also because <audio> is badly supported
     // as of 2011;
 
-    // someCardModel.get[Compiled]Question(): raw, including virgin sound tags; but from mediaDir or db
+    // someCardModel.getQa(QUESTION): raw String, but from mediaDir or db
     // someFact.getFields(): Map of field names to values OR similar
-    // someCard.getAugmentedFields(boolean legacy): with extra fields like card model name, ...
-    //  in legacy mode: put <span> around the fields
-    //  otherwise: delegate that to Mustache: {{}} instead of escaping HTML: put <span> around it
-    //   {{{}}} as is: no escaping, no span; {{& }} escape HTML and put <span>s
-    // someCard.getQuestionOrAnswer(): qa with fields replaced and sound as URI list
-    // someCard.getQA(): the same, without sound.
-    //   both rewrite [sound:...] to <audio...>
-    // Deck.registerMetaTemplate(String metaTemplate): in case someDeck does not have one
-    // someCard.getFinal(x.QUESTION, boolean legacy): formatted HTML question page
+    // someCard.getAugmentedFields(): with extra fields like card model name, ...
+    // new Panki-Mustache flavor:
+    // {{}} (for normal anki fields) put <span> around it, does not escape HTML
+    // {{{}}} (for attribute values (filenames), or element content (code/math-snippets): no span, but HTML-escaping
+    // {{& }} (for e.g. HTML footers): raw – no span, no escaping
 
-    // note: in “non-legacy” mode, audio urls should be retrieved from the webwidget DOM, if the
-    // host is interested in them (e.g. for playing)
+    // Deck.setMetaTemplate(String metaTemplate): in case someDeck does not have one
+    // someCard.getHtmlPage(): formatted HTML page (Templates should have <audio> tags for collection via JS)
+
+    // audio urls should be retrieved from the webwidget DOM, if the host is interested in them (e.g. for playing)
 
     // play question means: play question audio
     // play answer: q + a, except when question got played alone the last time, then only answer
 
 
-    public String getFinal(QA qa) {
-    	return getFinal(qa, false).string;
-    }
-
-    public StringAndList getFinal(QA qa, boolean legacy) {
-    	String mediaDir = mDeck.mediaDir(false, true);
-    	Template metaTemplate = mDeck.getMetaTemplate();
-    	for (String prefix: new String[] {"android.portrait.", "android.", ""}) {
-    		File metaTemplateFile = File(mediaDir, prefix + );
-    		if source.exists() {
-    			metatemplate = source.from_this().compile();
-    			break;
-    		}
-    	}
-
-    	StringAndList result = new StringAndList();
-    	Map<String, String> context = new HashMap<String, String>();
-    	StringAndList question = getQA(QA.QUESTION, legacy);
-    	StringAndList answer = new StringAndList();
-    	if (qa == QA.ANSWER) {
-    		answer = getQA(QA.ANSWER, legacy);
-    		result.list = answer.list;
-    	} else {
-    		result.list = question.list;
-    	}
-
-    	context.put("question", question.string);
-    	context.put("answer", answer.string);
-        result.string = metatemplate.execute(context);
-        return result;
+    public String getHtmlPage() {
+        Map<String, String> context = getAugmentedFields();
+        context.put("anki_question", mCardModel.getQa(QA.QUESTION));
+        context.put("anki_answer", mCardModel.getQa(QA.ANSWER));
+        // “anki_” prefix is used for all anki stuff. – anki_card_... could be card things. Note that there is no
+        // distinction
+        // between main, deck and model. I consider model one indirection too much, so I fold it into deck (multi-deck
+        // review should be supported instead). Most configuration should be per deck, and almost nothing (may be a
+        // version a la “anki_version”) based on the anki instance running, so I consider anki_deck_blabla long
+        // and unnecessary; a clash is very unlikely, so I will call that anki_blabla instead.
+        // Maybe I even don’t do the anki_card_thing, but I don’t know yet where to put the card history...
+        // hr: can be used in a conditional, to ask for the configuration: it is <hr> or the empty string.
+        // style: in charge of including Anki-managed CSS (which can be influenced without the need to edit metatemplate
+        // script: in charge of loading script(s): loads the code needed for Anki to work: default onflip(),
+        // audio-stuff, ...
+        context.put("anki_hr", "<hr>");
+        context.put("anki_style", "<link id=anki_style rel=stylesheet href='file:///android_assets/style.css'>");
+        context.put("anki_script", "<script src=script.html></script>");
+        return new Template(mDeck.getMetaTemplate()).execute(context);
     }
 
 
-    static class StringAndList {
-    	String string;
-    	List<URI> list;
-    }
-
-    // next step: fish the list from the DOM (<audio> templates return a empty list anyway...)
-    public StringAndList getQA(QA qa, boolean legacy) {
-    	Map<String, String> fields = getAugmentedFields(true);  // Mustache not updated yet
-    	Template template = (qa == QA.QUESTION) ? mCardModel.getCompiledQuestion() : mCardModel.getCompiledAnswer();
-    	return Sound.splitHtmlandRewrite(template.execute(fields));
-    }
-
-
-    public String getQA(QA qa) {
-    	return getQA(qa, false).string;
-    }
-
-    private Map<String, String> getAugmentedFields(boolean legacy) {
+    private Map<String, String> getAugmentedFields() {
         Map<String, String> fields = new HashMap<String, String>();
         for (Fact.Field f : getFact().getFields()) {
         	String name = f.getFieldModel().getName();
         	String value = f.getValue();
-            // fields.put("text:" + f.getFieldModel().getName(), Utils.stripHTML(f.getValue()));
-            if (!value.equals("") && legacy) {
-                value = String.format("<span class=\"%s\">%s</span>", Utils.cleanName(name), value);
-            }
             fields.put(name, value);
         }
         fields.put("tags", mFact.getTags());

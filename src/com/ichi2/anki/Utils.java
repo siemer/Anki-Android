@@ -1,6 +1,7 @@
 /****************************************************************************************
  * Copyright (c) 2009 Daniel Svärd <daniel.svard@gmail.com>                             *
  * Copyright (c) 2009 Edu Zamora <edu.zasu@gmail.com>                                   *
+ * Copyright (c) 2011 Robert Siemer <Robert.Siemer-pankidroid@backsla.sh>
  *                                                                                      *
  * This program is free software; you can redistribute it and/or modify it under        *
  * the terms of the GNU General Public License as published by the Free Software        *
@@ -23,7 +24,6 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
-import android.net.Uri;
 import android.text.Html;
 import android.util.Log;
 import android.view.Menu;
@@ -52,7 +52,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.io.Reader;
 import java.io.UnsupportedEncodingException;
+import java.io.Writer;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -85,31 +88,149 @@ public class Utils {
     public static final Locale ENGLISH_LOCALE = new Locale("en_US");
 
     public static final int CHUNK_SIZE = 32768;
+    public static final int DEFAULT_BUFFER_SIZE = 8192;
 
     private static final int DAYS_BEFORE_1970 = 719163;
 
     private static TreeSet<Long> sIdTree;
     private static long sIdTime;
 
+    // Android uses ICU regex: it conforms to TR18 Level1: proper surrogates get decoded and should not be visible here
+    // for CSS class names (and since HTML5 also for id) used in CSS and HTML
+    // IsControl is C0 and C1 controls plus 0x7f: 0x00-0x1f + 0x7f-0x9f (from Unicode because of HTML5)
+    // the space-characters range is from HTML5
+    // the <not a character> is from Unicode because of HTML5’s “permanently unassigned” rule (no way around literal)
+    // literals: the 32 chars in the Arabic area for internal processing and 2 last chars in each block
+    // Punct == ASCII - IsControl - 0x20 - Alnum; exactly what is not allowed in CSS, except - and _, which are special
+    // better always escape _ in CSS, on special less...
+    // if I escape “-” all the time in CSS, I remove one special; only beginning numbers are left to treat
+
+    // The following Pattern is made to guarantee that every .find() matches one group with our without subgroup.
+    private static final Pattern CSS_INVALID = Pattern.compile(
+            "   ([ \\x20 \\t \\n \\f \\r ])     |     " +
+            "   (\\p{IsControl} | " +
+            "        [ \\uFDD0 - \\uFDEF \\uFFFE \\uFFFF \\U0001FFFE \\U0001FFFF \\U0002FFFE \\U0002FFFF" +
+            "        \\U0003FFFE \\U0003FFFF \\U0004FFFE \\U0004FFFF \\U0005FFFE \\U0005FFFF \\U0006FFFE \\U0006FFFF" +
+            "        \\U0007FFFE \\U0007FFFF \\U0008FFFE \\U0008FFFF \\U0009FFFE \\U0009FFFF \\U000AFFFE \\U000AFFFF" +
+            "        \\U000BFFFE \\U000BFFFF \\U000CFFFE \\U000CFFFF \\U000DFFFE \\U000DFFFF \\U000EFFFE \\U000EFFFF" +
+            "        \\U000FFFFE \\U000FFFFF \\U0010FFFE \\U0010FFFF])     |     " +
+            "   (   ((?=[ ' \" & < ]))?  \\p{Punct}   )     |     " +
+            "   (^ \\p{Digit})   ", Pattern.COMMENTS);
+    private static final int CSS_REPLACE = 1; // space characters (or map to private area) [for HTML]
+    // other non-space Control Characters (includes NUL) and <not a character> (or map as well) [NUL both, others HTML]
+    private static final int CSS_DELETE = 2;
+    private static final int CSS_ESCAPE = 3; // some ASCII punctuation [“beauty” escapes for CSS]
+    private static final int CSS_ESCAPE_HTML = 4; // only together with CSS_ESCAPE, but in only “on” for a HTML subset
+    private static final int CSS_DIGITHEXESCAPE = 5; // beginning digit [CSS]  // nothing else is left below 0xA0
+
+    private static final Pattern cleanFileNamePattern = Pattern.compile("[.<>\"|:*?%/\\\\]");
+    private static final Pattern htmlEntitiesPattern = Pattern.compile("&#?\\w+;");
+    private static final Pattern imgPattern = Pattern.compile("<img src=[\"']?([^\"'>]+)[\"']? ?/?>");
+    private static final Pattern scriptPattern = Pattern.compile("(?s)<script.*?>.*?</script>");
+    private static final Pattern stylePattern = Pattern.compile("(?s)<style.*?>.*?</style>");
+    private static final Pattern tagPattern = Pattern.compile("<.*?>");
+
 
     /* Prevent class from being instantiated */
-    private Utils() { }
-
-    // Regex pattern used in removing tags from text before diff
-    private static final Pattern imgPattern = Pattern.compile("<img src=[\"']?([^\"'>]+)[\"']? ?/?>");
-    private static final Pattern stylePattern = Pattern.compile("(?s)<style.*?>.*?</style>");
-    private static final Pattern scriptPattern = Pattern.compile("(?s)<script.*?>.*?</script>");
-    private static final Pattern tagPattern = Pattern.compile("<.*?>");
-    private static final Pattern htmlEntitiesPattern = Pattern.compile("&#?\\w+;");
-    private static final Pattern cleanNamePattern = Pattern.compile("[\\ \"&]");
-
-    // remove space, backslash, double quote and ampersand
-    public static String cleanName(String name) {
-    	Matcher matcher = cleanNamePattern.matcher(name);
-    	return matcher.replaceAll("");
+    private Utils() {
     }
-    
-    
+
+
+    public static String replaceFatSpecials(String name) {
+        Matcher matcher = cleanFileNamePattern.matcher(name);
+        return matcher.replaceAll("_");
+    }
+
+
+    /**
+     * Escapes html attribute values or non-raw-text content of elements. According to HTML5, the input String is
+     * filtered for control characters and <not a character> code points.
+     * <p>
+     * The String returned can be used as content in basically all elements except &lt;script> and &lt;style>, where the
+     * most of the performed escapes are unnecessary and not recognized.
+     * <p>
+     * It can also be used as attribute value, but only in quotes (single or double), unquoted it would be
+     * under-escaped.
+     * <p>
+     * The String is not properly checked or escaped for tag or attribute *names*, comments or other places.
+     * <p>
+     * This function protects only against breaking out of the contexts described. A value of "javascript:alert(1)" will
+     * come back as is and have potential effect depending where it is put. The escaping done here is for HTML to
+     * understand. If the output is used in a href for example (because it is trusted), more escaping may be necessary
+     * to form a valid URI.
+     * <p>
+     * Optionally space characters can be changed to _ to allow for arbitrary input to be used as a class name, where
+     * spaces can not be represented (the class attribute value is a space separated list).
+     * <p>
+     * The escapeHtml and {@link escapeCssIdentifier} methods work together: Both functions may return a String that
+     * does not represent 100% the input (because you can’t represent that in HTML5), but both do the same modifications
+     * if space character mapping is used here, so they can be used to refer to the same class/id from HTML and CSS.
+     * 
+     * @param value whatever you please to turn into a valid HTML element content or attribute value
+     * @param mapSpace if true, space characters (space, tab, line and form feed, carriage return) are mapped to _
+     * @return the valid class attribute value, ready to be put somewhere single quoted; except when given null or "".
+     */
+    public static String escapeHtml(String value, boolean mapSpace) {
+        Matcher matcher = CSS_INVALID.matcher(value);
+        StringBuffer sb = new StringBuffer();
+        while (matcher.find()) {
+            String invalid;
+            if ((invalid = matcher.group(CSS_REPLACE)) != null) {
+                matcher.appendReplacement(sb, "");
+                sb.append(mapSpace ? "_" : invalid);
+            } else if (matcher.group(CSS_DELETE) != null) {
+                matcher.appendReplacement(sb, "");
+            } else if ((invalid = matcher.group(CSS_ESCAPE_HTML)) != null) {
+                matcher.appendReplacement(sb, String.format("&#x%x;", invalid.codePointAt(0)));
+            } else { // I got stuck on something valid for HTML, but not CSS.
+                matcher.appendReplacement(sb, "");
+                sb.append(matcher.group());
+            }
+        }
+        matcher.appendTail(sb);
+        return sb.toString();
+    }
+
+
+    /**
+     * Escapes CSS identifier (for class names). Useful for producing a valid CSS class name out of random user input.
+     * Almost all Unicode characters pass unharmed (but possibly escaped), only some are silently replaced by underscore
+     * (space characters) or removed (control characters and <not a character> code points).
+     * <p>
+     * Strictly speaking, for pure CSS identifiers e.g. escaped control characters and space characters would be fine,
+     * but not as CSS classes written in HTML!
+     * <p>
+     * The returned String is a valid identifier, and can be used after a dot as a class name. – For usage in
+     * [class="returned_String"] it would be over-escaped, but valid.
+     * <p>
+     * See {@link escapeHtmlAttribute} method for more explanation.
+     *
+     * @param id the possibly very crazy raw identifier name
+     * @return the valid CSS identifier (or e.g. “class name”), as long as the input is not null, nor the empty string
+     */
+    public static String escapeCssIdentifier(String id) {
+        Matcher matcher = CSS_INVALID.matcher(id);
+        StringBuffer sb = new StringBuffer();
+        while (matcher.find()) {
+            String invalid;
+            if (matcher.group(CSS_REPLACE) != null) {
+                matcher.appendReplacement(sb, "\\_");
+            } else if (matcher.group(CSS_DELETE) != null) {
+                matcher.appendReplacement(sb, "");
+            } else if ((invalid = matcher.group(CSS_ESCAPE)) != null) {
+                matcher.appendReplacement(sb, "\\");
+                sb.append(invalid);
+            } else if ((invalid = matcher.group(CSS_DIGITHEXESCAPE)) != null) {
+                matcher.appendReplacement(sb, "\\3");
+                sb.append(invalid);
+                sb.append(" ");
+            }
+        }
+        matcher.appendTail(sb);
+        return sb.toString();
+    }
+
+
     public static long genID() {
         long time = System.currentTimeMillis();
         long id;
@@ -143,7 +264,7 @@ public class Utils {
         }
         return Long.toHexString(id);
     }
-    
+
     public static long dehexifyID(String id) {
         BigInteger bid = new BigInteger(id, 16);
         if (bid.compareTo(maxID) >= 0) {
@@ -325,10 +446,52 @@ public class Utils {
     }
 
 
+    public static String readFile(File file) {
+        try {
+            return readFile(new FileInputStream(file));
+        } catch (FileNotFoundException e) {
+            throw new Error(e);
+        }
+    }
+
+
+    public static String readFile(InputStream inputStream) {
+        StringBuilder sb = new StringBuilder();
+        char[] buffer = new char[DEFAULT_BUFFER_SIZE];
+        int read;
+        try {
+            Reader reader = new InputStreamReader(inputStream, "UTF-8");
+            while ((read = reader.read(buffer, 0, buffer.length)) != -1) {
+                sb.append(buffer, 0, read);
+            }
+            reader.close();
+        } catch (IOException e) {
+            // UnsupportedEncodingException and IOException itself
+            throw new Error(e);
+        }
+        return sb.toString();
+    }
+
+
+    public static void writeFile(File file, String content) {
+        try {
+            Writer writer = new OutputStreamWriter(new FileOutputStream(file), "UTF-8");
+            writer.write(content);
+            writer.close();
+        } catch (UnsupportedEncodingException e) {
+            throw new Error(e);
+        } catch (FileNotFoundException e) {
+            throw new Error(e);
+        } catch (IOException e) {
+            throw new Error(e);
+        }
+    }
+
+
     /**
      * Utility method to write to a file.
      * Throws the exception, so we can report it in syncing log
-     * @throws IOException 
+     * @throws IOException
      */
     public static void writeToFile(InputStream source, String destination) throws IOException {
         Log.i(AnkiDroidApp.TAG, "Creating new file... = " + destination);
@@ -482,22 +645,22 @@ public class Utils {
    	       		return context.getResources().getStringArray(R.array.next_review_s)[type];
    	       	} else {
    	       		return String.format(context.getResources().getStringArray(R.array.next_review_p)[type], formatDouble(type, adjustedInterval));
-   	    	}   			
+   	    	}
    		} else {
    	    	if (adjustedInterval == 1){
-   	       		return context.getResources().getStringArray(R.array.next_review_in_s)[type]; 			       			
+   	       		return context.getResources().getStringArray(R.array.next_review_in_s)[type];
    	       	} else {
    	       		return String.format(context.getResources().getStringArray(R.array.next_review_in_p)[type], formatDouble(type, adjustedInterval));
-   	    	}   			
+   	    	}
    		}
     }
 
 
     private static String formatDouble(int type, double adjustedInterval) {
     	if (type == 0 || (adjustedInterval * 10) % 10 == 0){
-			return String.valueOf((int) adjustedInterval);        			   			
+			return String.valueOf((int) adjustedInterval);
     	} else {
-       		return String.valueOf(adjustedInterval); 	
+       		return String.valueOf(adjustedInterval);
 		}
     }
 
@@ -577,43 +740,10 @@ public class Utils {
         return list.size() > 0;
     }
 
-    
-    public static String getBaseUrl(String mediaDir, Model model, Deck deck) {
-        String base = model.getFeatures().trim();
-        if (deck.getBool("remoteImages") && base.length() != 0 && !base.equalsIgnoreCase("null")) {
-            return base;
-        } else {
-            // Anki desktop calls deck.mediaDir() here, but for efficiency reasons we only call it once in
-            // Reviewer.onCreate() and use the value from there            
-            if (mediaDir != null) {                              
-                base = urlEncodeMediaDir(mediaDir);
-            }
-        }
-        return base;
-    }
-
-
-    /**
-     * @param mediaDir media directory path on SD card
-     * @return path converted to file URL, properly UTF-8 URL encoded
-     */
-    public static String urlEncodeMediaDir(String mediaDir) {
-        String base;
-        // Use android.net.Uri class to ensure whole path is properly encoded
-        // File.toURL() does not work here, and URLEncoder class is not directly usable
-        // with existing slashes
-        Uri mediaDirUri = Uri.fromFile(new File(mediaDir));
-
-        // Build complete URL
-        base = mediaDirUri.toString() +"/";
-
-        return base;
-    }
-
 
     /**
      * Take an array of Long and return an array of long
-     * 
+     *
      * @param array The input with type Long[]
      * @return The output with type long[]
      */
@@ -636,17 +766,17 @@ public class Utils {
         }
         return results;
     }
-    
-    
+
+
     /*
      * Tags
      **************************************/
-    
+
     /**
      * Parse a string and return a list of tags.
-     * 
+     *
      * @param tags A string containing tags separated by space or comma (optionally followed by space)
-     * @return An array of Strings containing the individual tags 
+     * @return An array of Strings containing the individual tags
      */
     public static String[] parseTags(String tags) {
         if (tags != null && tags.length() != 0) {
@@ -655,12 +785,12 @@ public class Utils {
             return new String[] {};
         }
     }
-    
+
     /**
      * Join a list of tags to a string, using spaces as separators
-     * 
+     *
      * @param tags The list of tags to join
-     * @return The joined tags in a single string 
+     * @return The joined tags in a single string
      */
     public static String joinTags(Collection<String> tags) {
         StringBuilder result = new StringBuilder(128);
@@ -669,10 +799,10 @@ public class Utils {
         }
         return result.toString().trim();
     }
-    
+
     /**
      * Strip leading/trailing/superfluous spaces/commas from a tags string. Remove duplicates and sort.
-     * 
+     *
      * @param tags The string containing the tags, separated by spaces or commas
      * @return The canonified string, as described above
      */
@@ -689,7 +819,7 @@ public class Utils {
 
     /**
      * Find if tag exists in a set of tags. The search is not case-sensitive
-     * 
+     *
      * @param tag The tag to look for
      * @param tags The set of tags
      * @return True is the tag is found in the set, false otherwise
@@ -703,11 +833,11 @@ public class Utils {
         }
         return false;
     }
-    
+
     /**
      * Add tags if they don't exist.
      * Both parameters are in string format, the tags being separated by space or comma, as in parseTags
-     * 
+     *
      * @param tagStr The new tag(s) that are to be added
      * @param tags The set of tags where the new ones will be added
      * @return A string containing the union of tags of the input parameters
@@ -770,45 +900,43 @@ public class Utils {
             } else if (progress < 0.75) {
                 view.setBackgroundColor(context.getResources().getColor(R.color.progressbar_3));
             } else {
-                view.setBackgroundColor(context.getResources().getColor(R.color.progressbar_4));            
-            }            
-            FrameLayout.LayoutParams lparam = new FrameLayout.LayoutParams(0, 0);            
+                view.setBackgroundColor(context.getResources().getColor(R.color.progressbar_4));
+            }
+            FrameLayout.LayoutParams lparam = new FrameLayout.LayoutParams(0, 0);
             lparam.height = y;
             lparam.width = (int) (maxX * progress);
             view.setLayoutParams(lparam);
         } else {
-            LinearLayout.LayoutParams lparam = new LinearLayout.LayoutParams(0, 0);            
+            LinearLayout.LayoutParams lparam = new LinearLayout.LayoutParams(0, 0);
             lparam.height = y;
             lparam.width = (int) (maxX * progress);
             view.setLayoutParams(lparam);
         }
-    }  
+    }
 
 
     /**
-     * MD5 sum of file.
-     * Equivalent to checksum(open(os.path.join(mdir, file), "rb").read()))
+     * MD5 sum of file. Equivalent to checksum(open(os.path.join(mdir, file), "rb").read()))
      *
-     * @param path The full path to the file
-     * @return A string of length 32 containing the hexadecimal representation of the MD5 checksum of the contents
-     * of the file
+     * @param file The checksum is calculated from the content of this File
+     * @return A string of length 32 containing the hexadecimal representation of the MD5 checksum of the contents of
+     *         the file
      */
-    public static String fileChecksum(String path) {
+    public static String fileChecksum(File file) {
         byte[] bytes = null;
         try {
-            File file = new File(path);
             if (file != null && file.isFile()) {
                 bytes = new byte[(int)file.length()];
                 FileInputStream fin = new FileInputStream(file);
                 fin.read(bytes);
             }
         } catch (FileNotFoundException e) {
-            Log.e(AnkiDroidApp.TAG, "Can't find file " + path + " to calculate its checksum");
+            Log.e(AnkiDroidApp.TAG, "Can't find file " + file + " to calculate its checksum");
         } catch (IOException e) {
-            Log.e(AnkiDroidApp.TAG, "Can't read file " + path + " to calculate its checksum");
+            Log.e(AnkiDroidApp.TAG, "Can't read file " + file + " to calculate its checksum");
         }
         if (bytes == null) {
-            Log.w(AnkiDroidApp.TAG, "File " + path + " appears to be empty");
+            Log.w(AnkiDroidApp.TAG, "File " + file + " appears to be empty");
             return "";
         }
         MessageDigest md = null;
@@ -828,8 +956,8 @@ public class Utils {
         }
         return result;
     }
-    
-    
+
+
     /**
      * Calculate the UTC offset
      */

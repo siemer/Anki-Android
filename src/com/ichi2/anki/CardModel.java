@@ -1,6 +1,7 @@
 /****************************************************************************************
  * Copyright (c) 2009 Daniel Svärd <daniel.svard@gmail.com>                             *
  * Copyright (c) 2010 Rick Gruber-Riemer <rick@vanosten.net>                            *
+ * Copyright (c) 2011 Robert Siemer <Robert.Siemer-pankidroid@backsla.sh>               *
  *                                                                                      *
  * This program is free software; you can redistribute it and/or modify it under        *
  * the terms of the GNU General Public License as published by the Free Software        *
@@ -21,20 +22,15 @@ import android.content.ContentValues;
 import android.database.Cursor;
 import android.util.Log;
 
-import com.samskivert.mustache.Mustache;
-import com.samskivert.mustache.Template;
-
+import java.io.File;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * Card model. Card models are used to make question/answer pairs for the information you add to facts. You can display
  * any number of fields on the question side and answer side.
- * 
+ *
  * @see http://ichi2.net/anki/wiki/ModelProperties#Card_Templates
  */
 public class CardModel implements Comparator<CardModel> {
@@ -42,19 +38,21 @@ public class CardModel implements Comparator<CardModel> {
     // TODO: Javadoc.
     // TODO: Methods for reading/writing from/to DB.
 
+    public static enum QA {
+        QUESTION, ANSWER
+    }
+
     public static final int DEFAULT_FONT_SIZE = 20;
     public static final int DEFAULT_FONT_SIZE_RATIO = 100;
     public static final String DEFAULT_FONT_FAMILY = "Arial";
     public static final String DEFAULT_FONT_COLOR = "#000000";
     public static final String DEFAULT_BACKGROUND_COLOR = "#FFFFFF";
 
-    /** Regex pattern used in removing tags from text before diff */
-    private static final Pattern sFactPattern = Pattern.compile("%\\([tT]ags\\)s");
-    private static final Pattern sModelPattern = Pattern.compile("%\\(modelTags\\)s");
-    private static final Pattern sTemplPattern = Pattern.compile("%\\(cardModel\\)s");
-
     // Regex pattern for converting old style template to new
     private static final Pattern sOldStylePattern = Pattern.compile("%\\((.+?)\\)s");
+    private static final Pattern sQaSeparator = Pattern.compile("^-----$", Pattern.MULTILINE);
+    private static final boolean LOCAL_LOGV = true;
+    private static final String TAG = "AnkiCardModel";
 
     // BEGIN SQL table columns
     private long mId; // Primary key
@@ -82,22 +80,18 @@ public class CardModel implements Comparator<CardModel> {
     private int mAnswerFontSize = DEFAULT_FONT_SIZE;
     private String mAnswerFontColour = DEFAULT_FONT_COLOR;
     private int mAnswerAlign = 0;
-    private String mLastFontFamily = DEFAULT_FONT_FAMILY;
-    private int mLastFontSize = DEFAULT_FONT_SIZE;
+    private final String mLastFontFamily = DEFAULT_FONT_FAMILY;
+    private final int mLastFontSize = DEFAULT_FONT_SIZE;
     // Used as background colour
     private String mLastFontColour = DEFAULT_BACKGROUND_COLOR;
-    private String mEditQuestionFontFamily = "";
-    private int mEditQuestionFontSize = 0;
-    private String mEditAnswerFontFamily = "";
-    private int mEditAnswerFontSize = 0;
+    private final String mEditQuestionFontFamily = "";
+    private final int mEditQuestionFontSize = 0;
+    private final String mEditAnswerFontFamily = "";
+    private final int mEditAnswerFontSize = 0;
     // Empty answer
-    private int mAllowEmptyAnswer = 1;
-    private String mTypeAnswer = "";
+    private final int mAllowEmptyAnswer = 1;
+    private final String mTypeAnswer = "";
     // END SQL table entries
-
-    // Compiled mustache templates
-    private Template mQTemplate = null;
-    private Template mATemplate = null;
 
     /**
      * Backward reference
@@ -105,24 +99,18 @@ public class CardModel implements Comparator<CardModel> {
     private Model mModel;
 
 
-    /**
-     * Constructor.
-     */
-    public CardModel(String name, String qformat, String aformat, boolean active) {
-        mName = name;
-        mQformat = qformat;
-        mAformat = aformat;
-        mActive = active ? 1 : 0;
-        mId = Utils.genID();
-        refreshTemplates();
-    }
+    // This constructor is used nowhere...
+    //
+    // public CardModel(String name, String qformat, String aformat, boolean active) {
+    // mName = name;
+    // mQformat = qformat;
+    // mAformat = aformat;
+    // mActive = active ? 1 : 0;
+    // mId = Utils.genID();
+    // }
 
 
-    /**
-     * Constructor.
-     */
-    public CardModel() {
-        this("", "q", "a", true);
+    private CardModel() {
     }
 
     /** SELECT string with only those fields, which are used in AnkiDroid */
@@ -170,7 +158,16 @@ public class CardModel implements Comparator<CardModel> {
                     myCardModel.mAnswerFontColour = cursor.getString(15);
                     myCardModel.mAnswerAlign = cursor.getInt(16);
                     myCardModel.mLastFontColour = cursor.getString(17);
-                    myCardModel.refreshTemplates();
+                    File template = new File(deck.mediaDir(), "cardmodel."
+                            + Utils.replaceFatSpecials(myCardModel.mName) + ".html");
+                    if (LOCAL_LOGV) {
+                        Log.v(TAG, template.getAbsolutePath());
+                    }
+                    if (template.exists()) {
+                        String[] qa = sQaSeparator.split(Utils.readFile(template));
+                        myCardModel.mQformat = qa[0];
+                        myCardModel.mAformat = qa[1];
+                    }
                     models.put(myCardModel.mId, myCardModel);
                 } while (cursor.moveToNext());
             }
@@ -180,7 +177,7 @@ public class CardModel implements Comparator<CardModel> {
             }
         }
     }
-    
+
     protected void toDB(Deck deck) {
         ContentValues values = new ContentValues();
         values.put("id", mId);
@@ -207,35 +204,6 @@ public class CardModel implements Comparator<CardModel> {
 
     public boolean isActive() {
         return (mActive != 0);
-    }
-
-
-    /**
-     * This function recompiles the templates for question and answer. It should be called everytime we change mQformat
-     * or mAformat, so if in the future we create set(Q|A)Format setters, we should include a call to this.
-     */
-    private void refreshTemplates() {
-        // Question template
-        StringBuffer sb = new StringBuffer();
-        Matcher m = sOldStylePattern.matcher(mQformat);
-        while (m.find()) {
-            // Convert old style
-            m.appendReplacement(sb, "{{" + m.group(1) + "}}");
-        }
-        m.appendTail(sb);
-        Log.i(AnkiDroidApp.TAG, "Compiling question template \"" + sb.toString() + "\"");
-        mQTemplate = Mustache.compiler().compile(sb.toString());
-
-        // Answer template
-        sb = new StringBuffer();
-        m = sOldStylePattern.matcher(mAformat);
-        while (m.find()) {
-            // Convert old style
-            m.appendReplacement(sb, "{{" + m.group(1) + "}}");
-        }
-        m.appendTail(sb);
-        Log.i(AnkiDroidApp.TAG, "Compiling answer template \"" + sb.toString() + "\"");
-        mATemplate = Mustache.compiler().compile(sb.toString());
     }
 
 
@@ -291,7 +259,7 @@ public class CardModel implements Comparator<CardModel> {
 
     /**
      * Implements Comparator by comparing the field "ordinal".
-     * 
+     *
      * @param object1
      * @param object2
      * @return
@@ -405,48 +373,27 @@ public class CardModel implements Comparator<CardModel> {
     public String getName() {
         return mName;
     }
-    
-    /**
-     * Getter for question Format
-     * @return the question format
-     */
-    public String getQFormat() {
-        return mQformat;
-    }
-    
+
+
     /**
      * Setter for question Format
      * @param the new question format
      */
     public void setQFormat(String qFormat) {
         mQformat = qFormat;
-        refreshTemplates();
     }
-    
-    /**
-     * Getter for answer Format
-     * @return the answer format
-     */
-    public String getAFormat() {
-        return mAformat;
-    }
-    
+
+
     /**
      * Setter for answer Format
      * @param the new answer format
      */
     public void setAFormat(String aFormat) {
         mAformat = aFormat;
-        refreshTemplates();
     }
-    
-    
-    public Template getCompiledQuestion() {
-    	return mQTemplate;
-    }
-    
-    
-    public Template getCompiledAnswer() {
-    	return mATemplate;
+
+
+    public String getQa(QA qa) {
+        return qa == QA.QUESTION ? mQformat : mAformat;
     }
 }

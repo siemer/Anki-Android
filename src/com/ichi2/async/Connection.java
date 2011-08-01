@@ -33,7 +33,6 @@ import com.ichi2.anki.AnkiDroidProxy;
 import com.ichi2.anki.Deck;
 import com.ichi2.anki.Feedback;
 import com.ichi2.anki.R;
-import com.ichi2.anki.Reviewer;
 import com.ichi2.anki.SyncClient;
 import com.ichi2.anki.Utils;
 import com.tomgibara.android.veecheck.util.PrefSettings;
@@ -57,6 +56,7 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Map;
 
 public class Connection extends AsyncTask<Connection.Payload, Object, Connection.Payload> {
 
@@ -73,10 +73,10 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
 
     private static Connection sInstance;
     private TaskListener mListener;
-    
+
     public static final String CONFLICT_RESOLUTION = "ConflictResolutionRequired";
 
-    
+
     private static Connection launchConnectionTask(TaskListener listener, Payload data) {
 
         if (!isOnline()) {
@@ -184,7 +184,7 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
         return launchConnectionTask(listener, data);
     }
 
-    
+
     @Override
     protected Payload doInBackground(Payload... params) {
         Payload data = params[0];
@@ -210,7 +210,7 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
 
             case TASK_TYPE_SEND_CRASH_REPORT:
                 return doInBackgroundSendFeedback(data);
-                
+
             case TASK_TYPE_DOWNLOAD_MEDIA:
                 return doInBackgroundDownloadMissingMedia(data);
 
@@ -255,7 +255,7 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
 
     private Payload doInBackgroundGetPersonalDecks(Payload data) {
         Resources res = sContext.getResources();
-        
+
         try {
             String username = (String) data.data[0];
             String password = (String) data.data[1];
@@ -326,7 +326,7 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
         return data;
     }
 
-    
+
 
     private Payload doInBackgroundSyncDeck(Payload data) {
         Resources res = sContext.getResources();
@@ -394,7 +394,7 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
             SyncClient client = new SyncClient(deck);
             client.setServer(server);
             server.setDeckName(syncName);
-            
+
             // Check conflicts
             double localMod = deck.getModified();
             double localSync = deck.getLastSync();
@@ -454,7 +454,7 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
                             client.setLocalTime(0.0);
                         }
                     }
-                    
+
                     String syncFrom = client.prepareFullSync();
 
                     HashMap<String, String> result = new HashMap<String, String>();
@@ -521,13 +521,12 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
                     publishProgress(syncName, res.getString(R.string.sync_applying_reply_message));
                     client.applyPayloadReply(payloadReply);
                     deck.initDeckvarsCache();
-                    
-                    Reviewer.setupMedia(deck); // FIXME: setupMedia should be part of Deck?
+                    deck.initMediaPrefix();
                     SharedPreferences preferences = PrefSettings.getSharedPrefs(sContext);
                     if (preferences.getBoolean("syncFetchMedia", true)) {
                         doInBackgroundDownloadMissingMedia(new Payload(new Object[] {deck}));
                     }
-                    
+
                     if (!client.getServer().finish()) {
                         data.success = false;
                         syncChangelog.put("message", res.getString(R.string.sync_log_finish_error));
@@ -618,11 +617,11 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
                 publishProgress(postType, 0, Feedback.STATE_FAILED, reply.returnType, reply.result);
             }
         }
-        
+
         for (int i = 0; i < errors.size(); i++) {
             HashMap<String, String> error = errors.get(i);
             if (error.containsKey("state") && error.get("state").equals(Feedback.STATE_WAITING)) {
-                postType = Feedback.TYPE_STACKTRACE; 
+                postType = Feedback.TYPE_STACKTRACE;
                 publishProgress(postType, i, Feedback.STATE_UPLOADING);
                 Payload reply = Feedback.postFeedback(errorUrl, postType, error.get("filename"), groupId, i, app);
                 if (reply.success) {
@@ -637,7 +636,7 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
 
         return data;
     }
-    
+
     /**
      * Downloads any missing media files according to the mediaURL deckvar.
      * @param data
@@ -647,13 +646,13 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
      */
     private Payload doInBackgroundDownloadMissingMedia(Payload data) {
         Log.i(AnkiDroidApp.TAG, "DownloadMissingMedia");
-        HashMap<String, String> missingPaths = new HashMap<String, String>();
-        HashMap<String, String> missingSums = new HashMap<String, String>();
-        
+        Map<String, File> missingPaths = new HashMap<String, File>();
+        Map<String, String> missingSums = new HashMap<String, String>();
+
         Deck deck = (Deck) data.data[0];
         data.result = deck; // pass it to the return object so we close the deck in the deck picker
         String syncName = deck.getDeckName();
-                
+
         data.success = false;
         data.data = new Object[] {0, 0, 0};
         if (!deck.hasKey("mediaURL")) {
@@ -666,7 +665,7 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
             return data;
         }
 
-        String mdir = deck.mediaDir(true);
+        File mdir = deck.mediaDir(true);
         int totalMissing = 0;
         int missing = 0;
         int grabbed = 0;
@@ -674,16 +673,13 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
         Cursor cursor = null;
         try {
             cursor = deck.getDB().getDatabase().rawQuery("SELECT filename, originalPath FROM media", null);
-            String path = null;
-            String f = null;
             while (cursor.moveToNext()) {
-                f = cursor.getString(0);
-                path = mdir + "/" + f;
-                File file = new File(path);
-                if (!file.exists()) {
-                    missingPaths.put(f, path);
-                    missingSums.put(f, cursor.getString(1));
-                    Log.i(AnkiDroidApp.TAG, "Missing file: " + f);
+                String filename = cursor.getString(0);
+                File destination = new File(mdir, filename);
+                if (!destination.exists()) {
+                    missingPaths.put(filename, destination);
+                    missingSums.put(filename, cursor.getString(1));
+                    Log.i(AnkiDroidApp.TAG, "Missing file: " + filename);
                 }
             }
         } finally {
@@ -702,12 +698,12 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
 
         URL url = null;
         HttpURLConnection connection = null;
-        String path = null;
+        File path = null;
         String sum = null;
         int readbytes = 0;
         byte[] buf = new byte[4096];
         for (String file : missingPaths.keySet()) {
-            
+
             try {
                 android.net.Uri uri = android.net.Uri.parse(urlbase + Uri.encode(file));
                 url = new URI(uri.toString()).toURL();
@@ -723,7 +719,7 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
                         Log.i(AnkiDroidApp.TAG, "Downloaded " + readbytes + " file: " + path);
                     }
                     fos.close();
-    
+
                     // Verify with checksum
                     sum = missingSums.get(file);
                     if (sum.equals("") || sum.equals(Utils.fileChecksum(path))) {
@@ -731,8 +727,7 @@ public class Connection extends AsyncTask<Connection.Payload, Object, Connection
                     } else {
                         // Download corrupted, delete file
                         Log.i(AnkiDroidApp.TAG, "Downloaded media file " + path + " failed checksum.");
-                        File f = new File(path);
-                        f.delete();
+                        path.delete();
                         missing++;
                     }
                 } else {

@@ -25,10 +25,11 @@ import android.database.Cursor;
 import android.database.SQLException;
 import android.database.sqlite.SQLiteException;
 import android.database.sqlite.SQLiteStatement;
+import android.net.Uri;
 import android.util.Log;
 
+import com.ichi2.anki.CardModel.QA;
 import com.ichi2.anki.Fact.Field;
-import com.samskivert.mustache.Template;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -42,16 +43,15 @@ import java.util.Arrays;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 import java.util.Stack;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.Map.Entry;
 
 /**
  * A deck stores all of the cards and scheduling information. It is saved in a file with a name ending in .anki See
@@ -87,6 +87,8 @@ public class Deck {
     public static final String UNDO_TYPE_MARK_CARD = "Mark Card";
     public static final String UNDO_TYPE_BURY_CARD = "Bury Card";
     public static final String UNDO_TYPE_DELETE_CARD = "Delete Card";
+
+    private static String sDefaultMetaTemplate;
 
     public String mCurrentUndoRedoType = "";
 
@@ -216,10 +218,10 @@ public class Deck {
     private Stats mDailyStats;
 
     private long mCurrentCardId;
-    
+
     private int markedTagId = 0;
 
-    private HashMap<String, String> mDeckVars = new HashMap<String, String>();
+    private final HashMap<String, String> mDeckVars = new HashMap<String, String>();
 
     /**
      * Undo/Redo variables.
@@ -576,8 +578,8 @@ public class Deck {
 
 
     private void initVars() {
+        initMediaPrefix();
         // tmpMediaDir = null;
-        mMediaPrefix = null;
         // lastTags = "";
         mLastLoaded = Utils.now();
         // undoEnabled = false;
@@ -610,82 +612,79 @@ public class Deck {
     }
 
 
+    public void initMediaPrefix() {
+        String mediaLoc = getVar("mediaLocation");
+        if (mediaLoc != null) {
+            mediaLoc = mediaLoc.replace("\\", "/");
+            if (mediaLoc.contains("/Dropbox/Public/Anki")) {
+                // We're using dropbox
+                mMediaPrefix = AnkiDroidApp.getDropboxDir();
+            }
+        }
+    }
+
+
     // Media
     // *****
 
+    public String getBaseUrl() {
+        return Uri.fromFile(mediaDir()).toString() + "/";
+    }
+
+
     /**
-     * Return the media directory if exists, none if couldn't be created.
+     * Returns the media directory, even if it does not exist.
      *
      * @param create If true it will attempt to create the folder if it doesn't exist
-     * @param rename This is used to simulate the python with create=None that is only used when renaming the mediaDir
-     * @return The path of the media directory
+     * @return The File object of the media directory
      */
-    public String mediaDir() {
-        return mediaDir(false, false);
+    public File mediaDir() {
+        return mediaDir(false);
     }
-    public String mediaDir(boolean create) {
-        return mediaDir(create, false);
-    }
-    public String mediaDir(boolean create, boolean rename) {
+
+
+    public File mediaDir(boolean create) {
         String dir = null;
         File mediaDir = null;
-        if (mDeckPath != null && !mDeckPath.equals("")) {
-            Log.i(AnkiDroidApp.TAG, "mediaDir - mediaPrefix = " + mMediaPrefix);
-            if (mMediaPrefix != null) {
-                dir = mMediaPrefix + "/" + mDeckName + ".media";
-            } else {
-                dir = mDeckPath.replaceAll("\\.anki$", ".media");
-            }
-            if (rename) {
-                // Don't create, but return dir
-                return dir;
-            }
-            mediaDir = new File(dir);
-            if (!mediaDir.exists() && create) {
-                try {
-                    if (!mediaDir.mkdir()) {
-                        Log.e(AnkiDroidApp.TAG, "Couldn't create media directory " + dir);
-                        return null;
-                    }
-                } catch (SecurityException e) {
-                    Log.e(AnkiDroidApp.TAG, "Security restriction: Couldn't create media directory " + dir);
-                    return null;
-                }
-            }
-        }
-
-        if (dir == null) {
-            return null;
+        if (mMediaPrefix != null) {
+            dir = mMediaPrefix + "/" + mDeckName + ".media";
         } else {
-            if (!mediaDir.exists() || !mediaDir.isDirectory()) {
-                return null;
+            dir = mDeckPath.replaceAll("\\.anki$", ".media");
+        }
+        mediaDir = new File(dir);
+        if (!mediaDir.exists() && create) {
+            try {
+                if (!mediaDir.mkdirs()) {
+                    Log.e(AnkiDroidApp.TAG, "Couldn't create media directory " + dir);
+                }
+            } catch (SecurityException e) {
+                Log.e(AnkiDroidApp.TAG, "Security restriction: Couldn't create media directory " + dir);
             }
         }
-        Log.i(AnkiDroidApp.TAG, "mediaDir - mediaDir = " + dir);
-        return dir;
-    }
-
-    public String getMediaPrefix() {
-        return mMediaPrefix;
-    }
-    public void setMediaPrefix(String mediaPrefix) {
-        mMediaPrefix = mediaPrefix;
+        Log.i(AnkiDroidApp.TAG, "mediaDir = " + mediaDir.getAbsolutePath());
+        return mediaDir;
     }
 
 
-    public Template getMetaTemplate() {
-    	for (String prefix: new String[] {"android.portrait.", "android.", ""}) {
-    		File metaTemplateFile = File(mediaDir, prefix + );
+    public static void setDefaultMetaTemplate(String metaTemplate) {
+        sDefaultMetaTemplate = metaTemplate;
+    }
+
+
+    public String getMetaTemplate() {
+        for (String prefix: new String[] { "android.portrait.", "android.", "" }) { // FIXME: landscape not handled
+            File metaTemplateFile = new File(mediaDir(), prefix + "metatemplate.html");
     		if (metaTemplateFile.exists()) {
-    			return FilemetaTemplateFile
-    		}
-    		if source.exists() {
-    			metatemplate = source.from_this().compile();
-    			break;
+                return Utils.readFile(metaTemplateFile);
     		}
     	}
-
+        if (sDefaultMetaTemplate == null) {
+            setDefaultMetaTemplate(Utils.readFile(AnkiDroidApp.getAppResources().openRawResource(R.raw.metatemplate)));
+        }
+        return sDefaultMetaTemplate;
     }
+
+
     /**
      * Upgrade deck to latest version. Any comments resulting from the upgrade, should be stored in upgradeNotes, as
      * R.string.id, successful or not. The idea is to have Deck.java generate the notes from upgrading and not the UI.
@@ -816,10 +815,10 @@ public class Deck {
 
                 for (CardModel cm : m.getCardModels()) {
                     // Embed the old font information into card templates
-                    String format = cm.getQFormat();
+                    String format = cm.getQa(QA.QUESTION);
                     cm.setQFormat(String.format(txt, cm.getQuestionFontFamily(), cm.getQuestionFontSize(),
                             cm.getQuestionFontColour(), format));
-                    format = cm.getAFormat();
+                    format = cm.getQa(QA.ANSWER);
                     cm.setAFormat(String.format(txt, cm.getAnswerFontFamily(), cm.getAnswerFontSize(),
                             cm.getAnswerFontColour(), format));
 
@@ -827,8 +826,8 @@ public class Deck {
                     for (String un : unstyled) {
                         String oldStyle = "%(" + un + ")s";
                         String newStyle = "{{{" + un + "}}}";
-                        cm.setQFormat(cm.getQFormat().replace(oldStyle, newStyle));
-                        cm.setAFormat(cm.getAFormat().replace(oldStyle, newStyle));
+                        cm.setQFormat(cm.getQa(QA.QUESTION).replace(oldStyle, newStyle));
+                        cm.setAFormat(cm.getQa(QA.ANSWER).replace(oldStyle, newStyle));
                     }
                     cm.toDB(this);
                 }
@@ -837,7 +836,8 @@ public class Deck {
             // We should be doing updateAllCards(), but it takes too long (really)
             // updateAllCards();
             // Rebuild the media db based on new format
-            Media.rebuildMediaDir(this, false);
+            // Media.* needs new concept to be implemented...
+            // Media.rebuildMediaDir(this, false);
             mVersion = 61;
             commitToDB();
         }
@@ -941,9 +941,9 @@ public class Deck {
      */
 
     private class QueueItem {
-        private long cardID;
-        private long factID;
-        private double due;
+        private final long cardID;
+        private final long factID;
+        private final double due;
 
 
         QueueItem(long cardID, long factID) {
@@ -976,8 +976,8 @@ public class Deck {
     }
 
     private class SpacedCardsItem {
-        private double space;
-        private ArrayList<Long> cards;
+        private final double space;
+        private final ArrayList<Long> cards;
 
 
         SpacedCardsItem(double space, ArrayList<Long> cards) {
@@ -1120,11 +1120,11 @@ public class Deck {
     	double count;
     	double averageTime;
     	if (global) {
-			averageTime = mGlobalStats.getAverageTime();		
+			averageTime = mGlobalStats.getAverageTime();
 		} else {
     		averageTime = mDailyStats.getAverageTime();
 		}
- 
+
     	double globalYoungNoShare = mGlobalStats.getYoungNoShare();
 
     	// rev + new cards first, account for failures
@@ -1138,7 +1138,7 @@ public class Deck {
     	double failedBaseCount = 20;
     	double factor = (failedBaseMulti + (failedMod * (failedCards - failedBaseCount)));
     	left += failedCards * averageTime * factor;
-        	
+
     	return (int) (left / 60);
     }
 
@@ -1631,12 +1631,12 @@ public class Deck {
         ArrayList<Long> popped = new ArrayList<Long>();
         double delay = 0.0;
         while (!queue.isEmpty()) {
-            long fid = ((QueueItem) queue.getLast()).getFactID();
+            long fid = (queue.getLast()).getFactID();
             if (mSpacedFacts.containsKey(fid)) {
                 // Still spaced
                 long id = queue.removeLast().getCardID();
                 // Assuming 10 cards/minute, track id if likely to expire before queue refilled
-                if (_new && (mNewSpacing < (double) mQueueLimit * 6.0)) {
+                if (_new && (mNewSpacing < mQueueLimit * 6.0)) {
                     popped.add(id);
                     delay = mSpacedFacts.get(fid);
                 }
@@ -1758,9 +1758,9 @@ public class Deck {
         cutoff = Math.min(System.currentTimeMillis() / 1000 + 86400, cutoff);
         mFailedCutoff = cutoff;
         if (getBool("perDay")) {
-            mDueCutoff = (double) cutoff;
+            mDueCutoff = cutoff;
         } else {
-            mDueCutoff = (double) Utils.now();
+            mDueCutoff = Utils.now();
         }
     }
 
@@ -1964,14 +1964,14 @@ public class Deck {
         fillQueues();
 
         if ((mFailedCardMax != 0) && (mFailedSoonCount >= mFailedCardMax)) {
-            return ((QueueItem) mFailedQueue.getLast()).getCardID();
+            return (mFailedQueue.getLast()).getCardID();
         }
         // Card due for review?
         if (revNoSpaced()) {
-            return ((QueueItem) mRevQueue.getLast()).getCardID();
+            return (mRevQueue.getLast()).getCardID();
         }
         if (!mFailedQueue.isEmpty()) {
-            return ((QueueItem) mFailedQueue.getLast()).getCardID();
+            return (mFailedQueue.getLast()).getCardID();
         }
         if (check) {
             // Collapse spaced cards before reverting back to old scheduler
@@ -1990,7 +1990,7 @@ public class Deck {
 
     @SuppressWarnings("unused")
     private int _cramCardQueue(Card card) {
-        if ((!mRevQueue.isEmpty()) && (((QueueItem) mRevQueue.getLast()).getCardID() == card.getId())) {
+        if ((!mRevQueue.isEmpty()) && ((mRevQueue.getLast()).getCardID() == card.getId())) {
             return 1;
         } else {
             return 0;
@@ -2187,11 +2187,6 @@ public class Deck {
 
     public String getDeckPath() {
         return mDeckPath;
-    }
-
-
-    public void setDeckPath(String path) {
-        mDeckPath = path;
     }
 
 
@@ -2602,7 +2597,7 @@ public class Deck {
         if (!mFailedQueue.isEmpty()) {
             // Failed card due?
             if (mDelay0 != 0l) {
-                if ((long) ((QueueItem) mFailedQueue.getLast()).getDue() + mDelay0 < System.currentTimeMillis() / 1000) {
+                if ((long) (mFailedQueue.getLast()).getDue() + mDelay0 < System.currentTimeMillis() / 1000) {
                     return mFailedQueue.getLast().getCardID();
                 }
             }
@@ -2837,7 +2832,7 @@ public class Deck {
                 		"WHEN type = 2 THEN %f ELSE combinedDue END)", mRevSpacing, mRevSpacing, _new));
         values.put("modified", String.format(Utils.ENGLISH_LOCALE, "%f", Utils.now()));
         values.put("isDue", 0);
-        getDB().update(this, "cards", values, String.format(Utils.ENGLISH_LOCALE, "id != %d AND factId = %d " 
+        getDB().update(this, "cards", values, String.format(Utils.ENGLISH_LOCALE, "id != %d AND factId = %d "
                 + "AND combinedDue < %f AND type BETWEEN 1 AND 2", card.getId(), card.getFactId(), mDueCutoff), null, false);
         mSpacedFacts.put(card.getFactId(), _new);
     }
@@ -3133,13 +3128,13 @@ public class Deck {
             	if (string.length() < 55) {
                     data[1] = string;
             	} else {
-                    data[1] = string.substring(0, 55) + "...";                   
+                    data[1] = string.substring(0, 55) + "...";
             	}
             	string = Utils.stripHTML(cur.getString(2));
                 if (string.length() < 55) {
                     data[2] = string;
                 } else {
-                    data[2] = string.substring(0, 55) + "...";                   
+                    data[2] = string.substring(0, 55) + "...";
                 }
             	String tags = cur.getString(3);
            	    if (tags.contains(TAG_MARKED)) {
@@ -3189,7 +3184,7 @@ public class Deck {
     public void resetMarkedTagId() {
     	markedTagId = 0;
     }
-    
+
     /*
      * Tags: adding/removing in bulk*********************************************************
      */
@@ -3970,9 +3965,9 @@ public class Deck {
      */
 
     private class UndoRow {
-        private String mName;
-        private Long mCardId;
-        private ArrayList<UndoCommand> mUndoCommands;
+        private final String mName;
+        private final Long mCardId;
+        private final ArrayList<UndoCommand> mUndoCommands;
 
         UndoRow(String name, Long cardId) {
             mName = name;
@@ -3983,10 +3978,10 @@ public class Deck {
 
 
     private class UndoCommand {
-        private String mCommand;
-        private String mTable;
-        private ContentValues mValues;
-        private String mWhereClause;
+        private final String mCommand;
+        private final String mTable;
+        private final ContentValues mValues;
+        private final String mWhereClause;
 
         UndoCommand(String command, String table, ContentValues values, String whereClause) {
         	mCommand = command;
